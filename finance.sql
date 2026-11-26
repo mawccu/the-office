@@ -1583,3 +1583,336 @@ begin
   perform public._notify(v_u.name, 'test', 'Test alert from The Office', 'If you can read this, alerts work on this device.', null, null, 'settings.html');
 end; $$;
 grant execute on function public.fund_test_alert(text,text) to anon;
+-- ------------------------------------------------------------
+-- 13) Chat read receipts + polls, shared calendar, office info
+--     (Wi-Fi / door codes), admin cash ("the fund owes the admin"),
+--     monthly backups.
+-- ------------------------------------------------------------
+set search_path = public, extensions;
+
+alter table public.fund_messages add column if not exists poll_id uuid;
+
+create table if not exists public.fund_polls (
+  id         uuid primary key default gen_random_uuid(),
+  created_by text not null references public.users(name),
+  question   text not null check (length(question) between 1 and 200),
+  options    jsonb not null,
+  multi      boolean not null default false,
+  closed_at  timestamptz,
+  created_at timestamptz not null default now()
+);
+create table if not exists public.fund_poll_votes (
+  poll_id    uuid not null references public.fund_polls(id) on delete cascade,
+  user_name  text not null references public.users(name),
+  option_idx int not null,
+  created_at timestamptz not null default now(),
+  primary key (poll_id, user_name, option_idx)
+);
+create table if not exists public.fund_events (
+  id         uuid primary key default gen_random_uuid(),
+  title      text not null,
+  kind       text not null default 'event' check (kind in ('event','holiday','day_off','closed')),
+  starts_on  date not null,
+  ends_on    date not null,
+  note       text,
+  created_by text not null references public.users(name),
+  created_at timestamptz not null default now(),
+  check (ends_on >= starts_on)
+);
+create index if not exists fund_events_start_idx on public.fund_events(starts_on);
+create table if not exists public.fund_info (
+  id         uuid primary key default gen_random_uuid(),
+  title      text not null,
+  value      text not null,
+  note       text,
+  sort       int not null default 0,
+  updated_by text,
+  updated_at timestamptz not null default now()
+);
+create table if not exists public.fund_backups (
+  period     date primary key,
+  data       jsonb not null,
+  created_at timestamptz not null default now()
+);
+do $$
+declare t text;
+begin
+  foreach t in array array['fund_polls','fund_poll_votes','fund_events','fund_info','fund_backups'] loop
+    execute format('alter table public.%I enable row level security', t);
+    execute format('revoke all on public.%I from anon, authenticated', t);
+  end loop;
+end $$;
+
+-- people now include how far each person has read the chat (for "Seen by")
+create or replace function public._fund_people() returns jsonb
+language sql stable security definer set search_path = public, extensions as $$
+  select coalesce(jsonb_agg(jsonb_build_object('name', name, 'role', fund_role, 'desk_id', desk_id,
+           'last_seen_at', last_seen_at, 'read_id', chat_read_id,
+           'active', last_seen_at is not null and last_seen_at > now() - interval '2 minutes')
+         order by (fund_role = 'admin') desc, name), '[]'::jsonb)
+  from public.users where fund_role is not null
+$$;
+
+-- ---------- polls ----------
+create or replace function public.fund_poll_create(p_name text, p_pin text, p_question text, p_options text[], p_multi boolean)
+returns bigint language plpgsql security definer set search_path = public, extensions as $$
+declare v_u public.users; v_opts jsonb; v_poll uuid; v_id bigint;
+begin
+  v_u := public._fund_user(p_name, p_pin);
+  p_question := btrim(coalesce(p_question, ''));
+  if length(p_question) = 0 then raise exception 'Write the question'; end if;
+  if length(p_question) > 200 then raise exception 'Keep the question under 200 characters'; end if;
+  select coalesce(jsonb_agg(o order by i), '[]'::jsonb) into v_opts
+    from (select btrim(x) as o, i from unnest(p_options) with ordinality as u(x, i) where btrim(coalesce(x, '')) <> '') s;
+  if jsonb_array_length(v_opts) < 2 then raise exception 'Give at least 2 options'; end if;
+  if jsonb_array_length(v_opts) > 8 then raise exception 'At most 8 options'; end if;
+  insert into public.fund_polls(created_by, question, options, multi) values (v_u.name, p_question, v_opts, coalesce(p_multi, false))
+    returning id into v_poll;
+  insert into public.fund_messages(user_name, body, poll_id) values (v_u.name, '📊 ' || p_question, v_poll) returning id into v_id;
+  update public.users set chat_read_id = greatest(chat_read_id, v_id) where name = v_u.name;
+  return v_id;
+end; $$;
+
+create or replace function public.fund_poll_vote(p_name text, p_pin text, p_poll uuid, p_option int)
+returns void language plpgsql security definer set search_path = public, extensions as $$
+declare v_u public.users; v_p public.fund_polls;
+begin
+  v_u := public._fund_user(p_name, p_pin);
+  select * into v_p from public.fund_polls where id = p_poll for update;
+  if v_p.id is null then raise exception 'Poll not found'; end if;
+  if v_p.closed_at is not null then raise exception 'This poll is closed'; end if;
+  if p_option is null or p_option < 0 or p_option >= jsonb_array_length(v_p.options) then raise exception 'Pick an option'; end if;
+  if exists (select 1 from public.fund_poll_votes where poll_id = p_poll and user_name = v_u.name and option_idx = p_option) then
+    delete from public.fund_poll_votes where poll_id = p_poll and user_name = v_u.name and option_idx = p_option;  -- tap again to undo
+    return;
+  end if;
+  if not v_p.multi then delete from public.fund_poll_votes where poll_id = p_poll and user_name = v_u.name; end if;
+  insert into public.fund_poll_votes(poll_id, user_name, option_idx) values (p_poll, v_u.name, p_option);
+end; $$;
+
+create or replace function public.fund_poll_close(p_name text, p_pin text, p_poll uuid)
+returns void language plpgsql security definer set search_path = public, extensions as $$
+declare v_u public.users;
+begin
+  v_u := public._fund_user(p_name, p_pin);
+  update public.fund_polls set closed_at = now()
+   where id = p_poll and closed_at is null and (created_by = v_u.name or v_u.fund_role = 'admin');
+  if not found then raise exception 'Only the person who made the poll (or the admin) can close it'; end if;
+end; $$;
+
+create or replace function public.fund_chat(p_name text, p_pin text, p_after bigint)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+declare v_u public.users; v_msgs jsonb; v_max bigint;
+begin
+  v_u := public._fund_user(p_name, p_pin);
+  select coalesce(jsonb_agg(jsonb_build_object('id', m.id, 'user_name', m.user_name, 'body', m.body, 'created_at', m.created_at, 'poll_id', m.poll_id) order by m.id), '[]'::jsonb)
+    into v_msgs
+    from (select * from public.fund_messages
+           where id > coalesce(p_after, 0)
+           order by id desc limit case when coalesce(p_after, 0) = 0 then 150 else 500 end) m;
+  select coalesce(max(id), 0) into v_max from public.fund_messages;
+  update public.users set chat_read_id = greatest(chat_read_id, v_max) where name = v_u.name;
+  return jsonb_build_object('messages', v_msgs, 'people', public._fund_people(), 'me', v_u.name,
+    'reactions', coalesce((select jsonb_agg(jsonb_build_object('message_id', message_id, 'emoji', emoji, 'users', users))
+        from (select message_id, emoji, jsonb_agg(user_name order by created_at) as users
+                from public.fund_reactions where message_id > v_max - 300 group by 1, 2) r), '[]'::jsonb),
+    'polls', coalesce((select jsonb_agg(jsonb_build_object('id', p.id, 'question', p.question, 'options', p.options, 'multi', p.multi,
+                 'closed_at', p.closed_at, 'created_by', p.created_by,
+                 'votes', coalesce((select jsonb_agg(jsonb_build_object('user_name', v.user_name, 'option_idx', v.option_idx))
+                                      from public.fund_poll_votes v where v.poll_id = p.id), '[]'::jsonb)))
+        from public.fund_polls p
+       where p.id in (select poll_id from public.fund_messages where poll_id is not null and id > v_max - 300)), '[]'::jsonb));
+end; $$;
+
+-- ---------- calendar ----------
+create or replace function public.fund_event_save(p_name text, p_pin text, p_id uuid, p_title text, p_kind text,
+                                                  p_start date, p_end date, p_note text)
+returns uuid language plpgsql security definer set search_path = public, extensions as $$
+declare v_u public.users; v_id uuid; v_e public.fund_events;
+begin
+  v_u := public._fund_user(p_name, p_pin);
+  if p_kind is null or p_kind not in ('event','holiday','day_off','closed') then p_kind := 'event'; end if;
+  p_title := btrim(coalesce(p_title, ''));
+  if length(p_title) = 0 then
+    p_title := case p_kind when 'day_off' then v_u.name || ' off' when 'holiday' then 'Holiday' when 'closed' then 'Office closed' else '' end;
+  end if;
+  if length(p_title) = 0 then raise exception 'Give it a title'; end if;
+  if p_start is null then raise exception 'Pick a date'; end if;
+  p_end := coalesce(p_end, p_start);
+  if p_end < p_start then raise exception 'The end date must be on or after the start date'; end if;
+  if p_end - p_start > 60 then raise exception 'At most 60 days at a time'; end if;
+  if p_id is null then
+    insert into public.fund_events(title, kind, starts_on, ends_on, note, created_by)
+      values (left(p_title, 120), p_kind, p_start, p_end, nullif(btrim(p_note), ''), v_u.name) returning id into v_id;
+    perform public._notify_role(r, 'calendar', 'On the calendar: ' || left(p_title, 120),
+        to_char(p_start, 'FMDy DD Mon') || case when p_end > p_start then ' – ' || to_char(p_end, 'FMDy DD Mon') else '' end
+        || ' · added by ' || v_u.name, null, v_id, 'office.html#calendar', v_u.name)
+      from unnest(array['member','admin']) r;
+  else
+    select * into v_e from public.fund_events where id = p_id for update;
+    if v_e.id is null then raise exception 'Not found'; end if;
+    if v_e.created_by <> v_u.name and v_u.fund_role <> 'admin' then raise exception 'Only the person who added it (or the admin) can change it'; end if;
+    update public.fund_events set title = left(p_title, 120), kind = p_kind, starts_on = p_start, ends_on = p_end, note = nullif(btrim(p_note), '')
+     where id = p_id returning id into v_id;
+  end if;
+  return v_id;
+end; $$;
+
+create or replace function public.fund_event_delete(p_name text, p_pin text, p_id uuid)
+returns void language plpgsql security definer set search_path = public, extensions as $$
+declare v_u public.users;
+begin
+  v_u := public._fund_user(p_name, p_pin);
+  delete from public.fund_events where id = p_id and (created_by = v_u.name or v_u.fund_role = 'admin');
+  if not found then raise exception 'Only the person who added it (or the admin) can remove it'; end if;
+end; $$;
+
+-- ---------- office info (Wi-Fi, door codes...) ----------
+create or replace function public.fund_info_save(p_name text, p_pin text, p_id uuid, p_title text, p_value text, p_note text, p_sort int)
+returns uuid language plpgsql security definer set search_path = public, extensions as $$
+declare v_a public.users; v_id uuid;
+begin
+  v_a := public._fund_admin(p_name, p_pin);
+  p_title := btrim(coalesce(p_title, '')); p_value := btrim(coalesce(p_value, ''));
+  if length(p_title) = 0 then raise exception 'Give it a title, like Wi-Fi password'; end if;
+  if length(p_value) = 0 then raise exception 'Enter the value'; end if;
+  if p_id is null then
+    insert into public.fund_info(title, value, note, sort, updated_by)
+      values (left(p_title, 80), left(p_value, 500), nullif(btrim(p_note), ''), coalesce(p_sort, 0), v_a.name) returning id into v_id;
+  else
+    update public.fund_info set title = left(p_title, 80), value = left(p_value, 500), note = nullif(btrim(p_note), ''),
+      sort = coalesce(p_sort, sort), updated_by = v_a.name, updated_at = now() where id = p_id returning id into v_id;
+    if v_id is null then raise exception 'Not found'; end if;
+  end if;
+  return v_id;
+end; $$;
+
+create or replace function public.fund_info_delete(p_name text, p_pin text, p_id uuid)
+returns void language plpgsql security definer set search_path = public, extensions as $$
+begin
+  perform public._fund_admin(p_name, p_pin);
+  delete from public.fund_info where id = p_id;
+end; $$;
+
+-- ---------- admin cash: what came in, what was paid out, who's holding what ----------
+create or replace function public._fund_cash() returns jsonb
+language sql stable security definer set search_path = public, extensions as $$
+  with t as (
+    select t.kind, t.amount_fils, exists (select 1 from public.fund_deposits d where d.id = t.ref_id) as is_dep
+      from public.fund_tx t)
+  select jsonb_build_object(
+    'deposits_in', coalesce(sum(amount_fils) filter (where kind = 'deposit' or (kind = 'reversal' and is_dep)), 0),
+    'paid_out', -coalesce(sum(amount_fils) filter (where kind in ('purchase','bill') or (kind = 'reversal' and not is_dep)), 0),
+    'holding', coalesce(sum(amount_fils), 0),
+    'owes_admin', greatest(0, -coalesce(sum(amount_fils), 0)))
+  from t
+$$;
+
+-- ---------- backups ----------
+create or replace function public._fund_snapshot() returns jsonb
+language sql stable security definer set search_path = public, extensions as $$
+  select jsonb_build_object(
+    'taken_at', now(),
+    'members', (select coalesce(jsonb_agg(jsonb_build_object('name', name, 'role', fund_role, 'desk', desk_id,
+                  'balance_fils', public._fund_balance(name)) order by fund_role, name), '[]'::jsonb) from public.users where fund_role is not null),
+    'ledger', (select coalesce(jsonb_agg(to_jsonb(t) order by t.created_at), '[]'::jsonb) from public.fund_tx t),
+    'deposits', (select coalesce(jsonb_agg(to_jsonb(d) order by d.created_at), '[]'::jsonb) from public.fund_deposits d),
+    'purchases', (select coalesce(jsonb_agg(to_jsonb(p) order by p.created_at), '[]'::jsonb) from public.fund_purchases p),
+    'bills', (select coalesce(jsonb_agg(to_jsonb(b) order by b.name), '[]'::jsonb) from public.fund_bills b),
+    'bill_charges', (select coalesce(jsonb_agg(to_jsonb(c) order by c.period, c.created_at), '[]'::jsonb) from public.fund_bill_charges c),
+    'statements', (select coalesce(jsonb_agg(to_jsonb(s) order by s.period, s.user_name), '[]'::jsonb) from public.fund_statements s),
+    'proposals', (select coalesce(jsonb_agg(to_jsonb(p) order by p.created_at), '[]'::jsonb) from public.fund_proposals p),
+    'cash', public._fund_cash())
+$$;
+
+create or replace function public.fund_export(p_name text, p_pin text)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+begin
+  perform public._fund_admin(p_name, p_pin);
+  return public._fund_snapshot();
+end; $$;
+
+create or replace function public.fund_backup_get(p_name text, p_pin text, p_period date)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+begin
+  perform public._fund_admin(p_name, p_pin);
+  return (select data from public.fund_backups where period = p_period);
+end; $$;
+
+-- everything the Office / Fund pages need for these features
+create or replace function public.fund_office(p_name text, p_pin text)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+declare v_u public.users; v_today date := public._fund_today();
+begin
+  v_u := public._fund_user(p_name, p_pin);
+  return jsonb_build_object(
+    'events', coalesce((select jsonb_agg(to_jsonb(e) order by e.starts_on, e.title) from public.fund_events e
+                         where e.ends_on >= v_today - 45 and e.starts_on <= v_today + 200), '[]'::jsonb),
+    'info', coalesce((select jsonb_agg(to_jsonb(i) order by i.sort, i.title) from public.fund_info i), '[]'::jsonb),
+    'cash', public._fund_cash(),
+    'backups', case when v_u.fund_role = 'admin' then coalesce((select jsonb_agg(jsonb_build_object('period', period, 'created_at', created_at,
+                  'rows', jsonb_array_length(data->'ledger')) order by period desc) from public.fund_backups), '[]'::jsonb) end);
+end; $$;
+
+-- ---------- monthly backup + "the fund owes you" reminder (run by the timed job) ----------
+create or replace function public._fund_more_tick() returns void
+language plpgsql security definer set search_path = public, extensions as $$
+declare v_period date := date_trunc('month', public._fund_today())::date; v_cash jsonb; v_last bigint; v_now bigint := extract(epoch from now())::bigint;
+begin
+  if not exists (select 1 from public.fund_backups where period = v_period)
+     and exists (select 1 from public.fund_tx) then
+    insert into public.fund_backups(period, data) values (v_period, public._fund_snapshot()) on conflict do nothing;
+    perform public._notify_role('admin', 'backup', 'Monthly backup saved (' || to_char(v_period, 'FMMonth YYYY') || ')',
+      'A copy of every money record was saved. You can also download it as a spreadsheet.', null, null, 'admin.html#backup');
+  end if;
+  v_cash := public._fund_cash();
+  if (v_cash->>'owes_admin')::bigint > 0 then
+    insert into public.fund_state(key, value) values ('owes_admin_at', 0) on conflict (key) do nothing;
+    select value into v_last from public.fund_state where key = 'owes_admin_at';
+    if v_now - v_last > 7 * 86400 then
+      update public.fund_state set value = v_now where key = 'owes_admin_at';
+      perform public._notify_role('admin', 'owes_admin', 'The fund owes you ' || public._jd((v_cash->>'owes_admin')::bigint),
+        'You paid more for the office than members have deposited. It evens out as members who owe make deposits.', (v_cash->>'owes_admin')::bigint, null, 'admin.html#cash');
+    end if;
+  end if;
+end; $$;
+
+-- chores tick now also runs the monthly backup + admin-cash check
+create or replace function public._fund_chore_tick() returns void
+language plpgsql security definer set search_path = public, extensions as $$
+declare c public.fund_chores; v_t jsonb; v_today date := public._fund_today(); v_new int;
+begin
+  for c in select * from public.fund_chores where active loop
+    v_t := public._fund_chore_turn(c, v_today);
+    if v_t is null then continue; end if;
+    insert into public.fund_chore_turns(chore_id, period_start, assignee)
+      values (c.id, (v_t->>'period_start')::date, v_t->>'assignee') on conflict do nothing;
+    get diagnostics v_new = row_count;
+    if v_new > 0 then
+      perform public._notify(v_t->>'assignee', 'chore', 'Your turn: ' || c.name,
+        'Until ' || to_char((v_t->>'period_end')::date, 'FMDy DD Mon') || '. Mark it done on the Office page when it''s finished.', null, c.id, 'office.html#chores');
+    end if;
+    if (v_t->>'period_end')::date = v_today then
+      update public.fund_chore_turns set reminded = true
+       where chore_id = c.id and period_start = (v_t->>'period_start')::date and done_at is null and not reminded;
+      if found then
+        perform public._notify(v_t->>'assignee', 'chore', 'Reminder: ' || c.name || ' is due today',
+          'Mark it done on the Office page when it''s finished.', null, c.id, 'office.html#chores');
+      end if;
+    end if;
+  end loop;
+  perform public._fund_more_tick();
+end; $$;
+
+revoke all on function public._fund_cash() from public, anon, authenticated;
+revoke all on function public._fund_snapshot() from public, anon, authenticated;
+revoke all on function public._fund_more_tick() from public, anon, authenticated;
+revoke all on function public._fund_chore_tick() from public, anon, authenticated;
+revoke all on function public._fund_people() from public, anon, authenticated;
+grant execute on function
+  public.fund_poll_create(text,text,text,text[],boolean), public.fund_poll_vote(text,text,uuid,int), public.fund_poll_close(text,text,uuid),
+  public.fund_chat(text,text,bigint),
+  public.fund_event_save(text,text,uuid,text,text,date,date,text), public.fund_event_delete(text,text,uuid),
+  public.fund_info_save(text,text,uuid,text,text,text,int), public.fund_info_delete(text,text,uuid),
+  public.fund_export(text,text), public.fund_backup_get(text,text,date), public.fund_office(text,text)
+  to anon;

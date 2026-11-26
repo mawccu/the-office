@@ -33,6 +33,8 @@ onFund = () => {
   $("adminForecast").innerHTML = forecastHtml(pool, "fund") + willOweHtml();
   renderMembers();
   renderEvents();
+  renderCash();
+  renderBackups();
   $("notifList").innerHTML = notificationsHtml(F.notifications);
   wireNotifications($("notifList"));
   if (location.hash && !onFund.scrolled) { onFund.scrolled = true; setTimeout(() => document.querySelector(location.hash)?.scrollIntoView({ block: "start" }), 50); }
@@ -304,4 +306,78 @@ function renderEvents() {
         });
       });
   }));
+}
+
+/* ---------- admin cash ---------- */
+function renderCash() {
+  const c = F.o?.cash;
+  if (!c) { $("cashBody").innerHTML = emptyBlock("Not available."); return; }
+  const owes = c.owes_admin > 0;
+  $("cashBody").innerHTML = `
+    <div class="cash-rows">
+      <div><span>Members deposited (approved)</span><b>${jd(c.deposits_in)}</b></div>
+      <div><span>You paid for the office (bills and purchases)</span><b>−${jdShort(c.paid_out)} JD</b></div>
+    </div>
+    <div class="cash-result ${owes ? "owed" : "ok"}">
+      <span>${owes ? "The fund owes you" : "You should be holding"}</span><b>${jd(owes ? c.owes_admin : c.holding)}</b>
+    </div>
+    <div class="set-sub">${owes
+      ? "You've paid more out of your own pocket than members have deposited. It's paid back automatically as members who owe make deposits. You get a reminder each week until it's even."
+      : "This is the fund's money you're keeping for the office. It matches the Fund total."}</div>`;
+}
+
+/* ---------- backups ---------- */
+function renderBackups() {
+  const list = F.o?.backups || [];
+  $("backupBody").innerHTML = `
+    <button class="btn primary wide" id="bkNow">${icon("receipt")} Download everything now (.xlsx)</button>
+    <div class="sub-head">Monthly copies</div>
+    ${list.length ? list.map((b) => `<div class="adm-row"><span class="adm-main"><b>${esc(fmtMonth(b.period))}</b><span class="adm-sub">Saved ${esc(fmtDate(b.created_at))} · ${b.rows} money movements</span></span>
+      <button class="linkbtn" data-bk="${b.period}">Download</button></div>`).join("") : emptyBlock("The first monthly copy is saved automatically.")}
+    <div class="set-sub">Spreadsheets open in Excel, Google Sheets or Numbers. Keep a copy somewhere safe, like your email or Google Drive.</div>`;
+  $("bkNow").addEventListener("click", async () => {
+    const { data, error } = await sb.rpc("fund_export", { p_name: auth.name, p_pin: auth.pin });
+    if (error) return toast(error.message);
+    downloadBackup(data, new Date().toISOString().slice(0, 10));
+  });
+  $("backupBody").querySelectorAll("[data-bk]").forEach((b) => b.addEventListener("click", async () => {
+    const { data, error } = await sb.rpc("fund_backup_get", { p_name: auth.name, p_pin: auth.pin, p_period: b.dataset.bk });
+    if (error || !data) return toast(error?.message || "Backup not found");
+    downloadBackup(data, b.dataset.bk.slice(0, 7));
+  }));
+}
+function loadXLSX() {
+  if (window.XLSX) return Promise.resolve(window.XLSX);
+  return new Promise((res, rej) => {
+    const s = document.createElement("script");
+    s.src = "https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js";
+    s.onload = () => res(window.XLSX); s.onerror = () => rej(new Error("Couldn't load the spreadsheet maker. Check your connection."));
+    document.head.appendChild(s);
+  });
+}
+async function downloadBackup(d, label) {
+  try {
+    const X = await loadXLSX();
+    const J = (f) => (f == null ? null : Number(f) / 1000);
+    const T = (iso) => (iso ? new Date(iso).toLocaleString("en-GB") : "");
+    const sheets = {
+      Members: d.members.map((m) => ({ Name: m.name, Role: m.role, Desk: m.desk || "", "Balance (JD)": J(m.balance_fils) })),
+      Ledger: d.ledger.map((t) => ({ When: T(t.created_at), Member: t.user_name, "Amount (JD)": J(t.amount_fils), Kind: t.kind, Memo: t.memo, By: t.created_by || "" })),
+      Deposits: d.deposits.map((x) => ({ Sent: T(x.created_at), Member: x.user_name, "Amount (JD)": J(x.amount_fils), Method: x.method, Note: x.note || "", Status: x.status, Reason: x.reason || "", Decided: T(x.decided_at), By: x.decided_by || "" })),
+      Purchases: d.purchases.map((p) => ({ When: T(p.created_at), Item: p.title, "Total (JD)": J(p.total_fils), Note: p.note || "", By: p.created_by, Reversed: p.reversed_at ? T(p.reversed_at) + " – " + (p.reverse_reason || "") : "" })),
+      Bills: d.bills.map((b) => ({ Bill: b.name, "Amount (JD)": b.amount_fils == null ? "changes monthly" : J(b.amount_fils), "Due day": b.due_day, Active: b.active ? "yes" : "no" })),
+      "Bill charges": d.bill_charges.map((c) => ({ Month: c.period, Bill: (d.bills.find((b) => b.id === c.bill_id) || {}).name || "", "Charged (JD)": J(c.amount_fils), Status: c.status, Note: c.note || "", When: T(c.decided_at) })),
+      Statements: d.statements.map((s) => ({ Month: s.period, Member: s.user_name, "Opening (JD)": J(s.opening_fils), "In (JD)": J(s.in_fils), "Out (JD)": J(s.out_fils), "Closing (JD)": J(s.closing_fils) })),
+      Wishlist: d.proposals.map((p) => ({ Proposed: T(p.created_at), Item: p.title, "Price (JD)": J(p.price_fils), By: p.proposed_by, Status: p.status })),
+      Summary: [{ "Members deposited (JD)": J(d.cash.deposits_in), "Paid for the office (JD)": J(d.cash.paid_out), "Fund holding (JD)": J(d.cash.holding), "Fund owes admin (JD)": J(d.cash.owes_admin), "Backup taken": T(d.taken_at) }],
+    };
+    const wb = X.utils.book_new();
+    for (const [name, rows] of Object.entries(sheets)) {
+      const ws = X.utils.json_to_sheet(rows.length ? rows : [{ Note: "Nothing yet" }]);
+      ws["!cols"] = Object.keys(rows[0] || { Note: 1 }).map((k) => ({ wch: Math.max(10, Math.min(40, k.length + 4)) }));
+      X.utils.book_append_sheet(wb, ws, name);
+    }
+    X.writeFile(wb, `the-office-backup-${label}.xlsx`);
+    toast("Backup downloaded");
+  } catch (e) { toast(e.message || String(e)); }
 }

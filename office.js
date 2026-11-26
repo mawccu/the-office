@@ -10,6 +10,8 @@ onFund = () => {
   renderToday();
   renderChores();
   renderMeeting();
+  renderCalendar();
+  renderInfo();
   if (location.hash && !onFund.scrolled) { onFund.scrolled = true; setTimeout(() => document.querySelector(location.hash)?.scrollIntoView({ block: "start" }), 60); }
 };
 
@@ -128,3 +130,122 @@ $("mrForm").addEventListener("submit", async (e) => {
   const ok = await callRpc("fund_book", { p_title: $("mrTitle").value, p_start: startAt.toISOString(), p_end: endAt.toISOString() }, "Meeting room booked");
   if (ok) $("mrTitle").value = "";
 });
+
+/* ---------- calendar ---------- */
+const KIND = { event: "Event", holiday: "Holiday", day_off: "Day off", closed: "Office closed" };
+let calMonth = (() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); })();
+function eventsOn(day) { return (F.o.events || []).filter((e) => e.starts_on <= day && e.ends_on >= day); }
+function renderCalendar() {
+  const y = calMonth.getFullYear(), mo = calMonth.getMonth();
+  $("calTitle").textContent = calMonth.toLocaleDateString([], { month: "long", year: "numeric" });
+  const first = new Date(y, mo, 1), startDow = (first.getDay() + 1) % 7; // weeks start on Saturday
+  const days = new Date(y, mo + 1, 0).getDate();
+  const today = localDate(new Date());
+  const heads = [6, 0, 1, 2, 3, 4, 5].map((d) => new Date(2023, 0, 1 + d).toLocaleDateString([], { weekday: "short" }));
+  let cells = heads.map((h) => `<div class="cal-h">${esc(h)}</div>`).join("");
+  for (let i = 0; i < startDow; i++) cells += `<div class="cal-d empty"></div>`;
+  for (let d = 1; d <= days; d++) {
+    const key = `${y}-${pad(mo + 1)}-${pad(d)}`;
+    const ev = eventsOn(key);
+    cells += `<button type="button" class="cal-d ${key === today ? "today" : ""} ${ev.length ? "has" : ""}" data-day="${key}">
+      <span class="cal-n">${d}</span><span class="cal-dots">${ev.slice(0, 3).map((e) => `<i class="ev-dot k-${e.kind}"></i>`).join("")}</span>
+      ${ev[0] ? `<span class="cal-t">${esc(ev[0].title)}${ev.length > 1 ? ` +${ev.length - 1}` : ""}</span>` : ""}</button>`;
+  }
+  $("calGrid").innerHTML = cells;
+  $("calGrid").querySelectorAll("[data-day]").forEach((b) => b.addEventListener("click", () => openDay(b.dataset.day)));
+  const up = (F.o.events || []).filter((e) => e.ends_on >= today).slice(0, 12);
+  $("calList").innerHTML = up.length ? up.map((e) => `<button type="button" class="ev-row" data-ev="${e.id}"><i class="ev-dot k-${e.kind}"></i>
+      <span class="ev-main"><b>${esc(e.title)}</b><span>${esc(rangeText(e))} · ${esc(KIND[e.kind])}</span></span></button>`).join("")
+    : emptyBlock("Nothing coming up. Add holidays, days off and office events.");
+  $("calList").querySelectorAll("[data-ev]").forEach((b) => b.addEventListener("click", () => openEvent(F.o.events.find((e) => e.id === b.dataset.ev))));
+}
+function rangeText(e) { return e.starts_on === e.ends_on ? fmtDay(e.starts_on) : `${fmtDay(e.starts_on)} – ${fmtDay(e.ends_on)}`; }
+$("calPrev").addEventListener("click", () => { calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() - 1, 1); renderCalendar(); });
+$("calNext").addEventListener("click", () => { calMonth = new Date(calMonth.getFullYear(), calMonth.getMonth() + 1, 1); renderCalendar(); });
+$("evAdd").addEventListener("click", () => openEvent(null));
+function openDay(day) {
+  const ev = eventsOn(day);
+  if (!ev.length) return openEvent(null, day);
+  openSheet(fmtDay(day), "", `<div class="ev-day">${ev.map((e) => `<button type="button" class="ev-row" data-ev="${e.id}"><i class="ev-dot k-${e.kind}"></i>
+      <span class="ev-main"><b>${esc(e.title)}</b><span>${esc(rangeText(e))} · ${esc(KIND[e.kind])} · ${esc(e.created_by)}</span>${e.note ? `<span>${esc(e.note)}</span>` : ""}</span></button>`).join("")}</div>
+    <div class="modal-actions"><button class="btn ghost" id="dClose">Close</button><button class="btn primary" id="dAdd">Add on this day</button></div>`,
+    (m) => {
+      m.querySelector("#dClose").addEventListener("click", closeSheet);
+      m.querySelector("#dAdd").addEventListener("click", () => openEvent(null, day));
+      m.querySelectorAll("[data-ev]").forEach((b) => b.addEventListener("click", () => openEvent(F.o.events.find((e) => e.id === b.dataset.ev))));
+    });
+}
+function openEvent(e, day) {
+  const mine = !e || e.created_by === F.me.name || isAdmin();
+  const d0 = e?.starts_on || day || localDate(new Date());
+  openSheet(e ? (mine ? "Edit" : e.title) : "Add to calendar", e ? `Added by ${esc(e.created_by)}` : "Everyone gets notified.", `
+    <div class="auth-fields">
+      <div class="seg" id="evKind">${Object.entries(KIND).map(([k, l]) => `<button type="button" class="seg-btn ${(e?.kind || "event") === k ? "on" : ""}" data-k="${k}" ${mine ? "" : "disabled"}>${l}</button>`).join("")}</div>
+      <input id="evTitle" class="fld" type="text" maxlength="120" placeholder="Title (for a day off, leave empty)" value="${esc(e?.title || "")}" ${mine ? "" : "disabled"} />
+      <div class="two-col"><label class="fld-label">From<input id="evStart" class="fld" type="date" value="${d0}" ${mine ? "" : "disabled"} /></label>
+        <label class="fld-label">To<input id="evEnd" class="fld" type="date" value="${e?.ends_on || d0}" ${mine ? "" : "disabled"} /></label></div>
+      <input id="evNote" class="fld" type="text" maxlength="200" placeholder="Note (optional)" value="${esc(e?.note || "")}" ${mine ? "" : "disabled"} />
+    </div>
+    <div class="auth-err sheet-err"></div>
+    <div class="modal-actions">${e && mine ? `<button class="btn danger" id="evDel">Remove</button>` : `<button class="btn ghost" id="evCancel">${mine ? "Cancel" : "Close"}</button>`}
+      ${mine ? `<button class="btn primary" id="evSave">Save</button>` : ""}</div>`,
+    (m) => {
+      let kind = e?.kind || "event";
+      m.querySelectorAll("[data-k]").forEach((b) => b.addEventListener("click", () => { kind = b.dataset.k; m.querySelectorAll("[data-k]").forEach((x) => x.classList.toggle("on", x === b)); }));
+      m.querySelector("#evCancel")?.addEventListener("click", closeSheet);
+      m.querySelector("#evStart")?.addEventListener("change", (ev) => { const end = m.querySelector("#evEnd"); if (end.value < ev.target.value) end.value = ev.target.value; });
+      m.querySelector("#evDel")?.addEventListener("click", async () => {
+        if (!confirm("Remove this from the calendar?")) return;
+        if (await callRpc("fund_event_delete", { p_id: e.id }, "Removed from the calendar")) closeSheet();
+      });
+      m.querySelector("#evSave")?.addEventListener("click", async () => {
+        const ok = await callRpc("fund_event_save", { p_id: e?.id || null, p_title: m.querySelector("#evTitle").value, p_kind: kind,
+          p_start: m.querySelector("#evStart").value, p_end: m.querySelector("#evEnd").value, p_note: m.querySelector("#evNote").value }, e ? "Saved" : "Added. Everyone has been notified.");
+        if (ok) closeSheet();
+      });
+    });
+}
+
+/* ---------- office info (Wi-Fi, door codes...) ---------- */
+function renderInfo() {
+  const list = F.o.info || [];
+  $("infoAdd").hidden = !isAdmin();
+  $("infoList").innerHTML = list.length ? list.map((i) => `<div class="info-card">
+      <div class="info-title">${esc(i.title)}</div>
+      <div class="info-val"><code class="masked" data-val="${i.id}">••••••••</code>
+        <button type="button" class="linkbtn" data-show="${i.id}">Show</button><button type="button" class="linkbtn" data-copy="${i.id}">Copy</button>
+        ${isAdmin() ? `<button type="button" class="linkbtn" data-iedit="${i.id}">Edit</button>` : ""}</div>
+      ${i.note ? `<div class="info-note">${esc(i.note)}</div>` : ""}
+    </div>`).join("") : emptyBlock(isAdmin() ? "Add the Wi-Fi password, door code, building contacts and so on. Only the fund members can see them." : "Nothing here yet. The admin can add the Wi-Fi password, door code and so on.");
+  const byId = (id) => list.find((x) => x.id === id);
+  $("infoList").querySelectorAll("[data-show]").forEach((b) => b.addEventListener("click", () => {
+    const c = $("infoList").querySelector(`[data-val="${b.dataset.show}"]`);
+    const shown = c.classList.toggle("shown");
+    c.textContent = shown ? byId(b.dataset.show).value : "••••••••";
+    b.textContent = shown ? "Hide" : "Show";
+  }));
+  $("infoList").querySelectorAll("[data-copy]").forEach((b) => b.addEventListener("click", async () => {
+    try { await navigator.clipboard.writeText(byId(b.dataset.copy).value); toast("Copied"); } catch { toast("Couldn't copy. Tap Show and copy it by hand."); }
+  }));
+  $("infoList").querySelectorAll("[data-iedit]").forEach((b) => b.addEventListener("click", () => openInfo(byId(b.dataset.iedit))));
+}
+$("infoAdd").addEventListener("click", () => openInfo(null));
+function openInfo(i) {
+  openSheet(i ? `Edit ${i.title}` : "Add office info", "Only the six members and the admin can see this.", `
+    <div class="auth-fields">
+      <input id="inTitle" class="fld" type="text" maxlength="80" placeholder="Title, like Wi-Fi password" value="${esc(i?.title || "")}" />
+      <input id="inValue" class="fld" type="text" maxlength="500" placeholder="Value" value="${esc(i?.value || "")}" />
+      <input id="inNote" class="fld" type="text" maxlength="200" placeholder="Note (optional), like the network name" value="${esc(i?.note || "")}" />
+    </div>
+    <div class="auth-err sheet-err"></div>
+    <div class="modal-actions">${i ? `<button class="btn danger" id="inDel">Remove</button>` : `<button class="btn ghost" id="inCancel">Cancel</button>`}<button class="btn primary" id="inSave">Save</button></div>`,
+    (m) => {
+      m.querySelector("#inCancel")?.addEventListener("click", closeSheet);
+      m.querySelector("#inDel")?.addEventListener("click", async () => { if (confirm("Remove this?") && await callRpc("fund_info_delete", { p_id: i.id }, "Removed")) closeSheet(); });
+      m.querySelector("#inSave").addEventListener("click", async () => {
+        const ok = await callRpc("fund_info_save", { p_id: i?.id || null, p_title: m.querySelector("#inTitle").value, p_value: m.querySelector("#inValue").value,
+          p_note: m.querySelector("#inNote").value, p_sort: i?.sort ?? (F.o.info || []).length }, "Saved");
+        if (ok) closeSheet();
+      });
+    });
+}

@@ -74,10 +74,12 @@ async function loadFund() {
     const { data, error } = await sb.rpc("fund_dashboard", { p_name: auth.name, p_pin: auth.pin });
     if (error) throw error;
     F = data;
-    const [pr, ex] = await Promise.all([
+    const [pr, ex, of] = await Promise.all([
       sb.rpc("fund_people", { p_name: auth.name, p_pin: auth.pin }),
       sb.rpc("fund_extras", { p_name: auth.name, p_pin: auth.pin }),
+      sb.rpc("fund_office", { p_name: auth.name, p_pin: auth.pin }),
     ]);
+    F.o = of.error ? { events: [], info: [], cash: null, backups: null } : of.data;
     F.people = pr.error ? [] : (pr.data || []);
     F.x = ex.error ? { attachments: [], checkins: [], chores: [], bookings: [], settings: {} } : ex.data;
     localStorage.setItem("fund_role", F.me.role);
@@ -347,7 +349,7 @@ const NOTIF_ICON = {
   deposit_approved: "wallet", deposit_rejected: "x", deposit_request: "wallet", purchase: "receipt", bill: "calendar",
   bill_due: "calendar", owed: "bolt", reversal: "receipt", proposal_new: "bag", proposal_approved: "check",
   proposal_rejected: "x", proposal_expired: "x", proposal_withdrawn: "x", vote_reminder: "bell", statement: "chart", welcome: "sparkle",
-  mention: "chat", chore: "sweep", test: "bell",
+  mention: "chat", chore: "sweep", test: "bell", calendar: "calendar", backup: "receipt", owes_admin: "wallet",
 };
 function notificationsHtml(list) {
   if (!list.length) return emptyBlock("Nothing yet. Every change to your money will show up here.");

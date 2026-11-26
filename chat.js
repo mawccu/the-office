@@ -7,7 +7,7 @@
 renderNav("chat");
 
 const $ = (id) => document.getElementById(id);
-const chat = { msgs: [], lastId: 0, people: [], me: null, started: false, busy: false, timer: null, rx: {}, rxKey: "" };
+const chat = { msgs: [], lastId: 0, people: [], me: null, started: false, busy: false, timer: null, rx: {}, rxKey: "", polls: {}, pollKey: "", seenKey: "" };
 const EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 
 onFund = () => {
@@ -34,7 +34,12 @@ async function pollChat(first) {
       chat.rxKey = rxKey; chat.rx = {};
       (data.reactions || []).forEach((r) => { (chat.rx[r.message_id] = chat.rx[r.message_id] || []).push(r); });
     }
-    if (!data.messages.length && rxChanged && !first) renderMessages();
+    const pollKey = JSON.stringify(data.polls || []);
+    const pollChanged = pollKey !== chat.pollKey;
+    if (pollChanged) { chat.pollKey = pollKey; chat.polls = {}; (data.polls || []).forEach((p) => (chat.polls[p.id] = p)); }
+    const seenKey = chat.people.map((p) => p.name + ":" + p.read_id).join(",");
+    const seenChanged = seenKey !== chat.seenKey; chat.seenKey = seenKey;
+    if (!data.messages.length && (rxChanged || pollChanged || seenChanged) && !first) renderMessages();
     if (data.messages.length) {
       const nearBottom = isNearBottom();
       chat.msgs.push(...data.messages);
@@ -70,6 +75,7 @@ function renderMessages() {
     return;
   }
   let html = "", lastDay = "", lastUser = "", lastTime = 0;
+  const lastMine = [...chat.msgs].reverse().find((m) => m.user_name === chat.me);
   for (const m of chat.msgs) {
     const day = dayLabel(m.created_at);
     if (day !== lastDay) { html += `<div class="chat-day"><span>${esc(day)}</span></div>`; lastDay = day; lastUser = ""; }
@@ -80,17 +86,88 @@ function renderMessages() {
     const isAdminMsg = person?.role === "admin";
     html += `<div class="msg ${mine ? "mine" : ""} ${grouped ? "grouped" : ""}">
       ${!mine && !grouped ? `<div class="msg-who">${esc(m.user_name)}${isAdminMsg ? ` <span class="msg-tag">admin</span>` : ""}</div>` : ""}
-      <div class="msg-line"><div class="msg-bubble">${mentionify(linkify(esc(m.body))).replace(/\n/g, "<br>")}</div>
+      <div class="msg-line"><div class="msg-bubble${m.poll_id ? " poll-bubble" : ""}">${m.poll_id && chat.polls[m.poll_id] ? pollHtml(chat.polls[m.poll_id]) : mentionify(linkify(esc(m.body))).replace(/\n/g, "<br>")}</div>
         <button class="rx-add" type="button" data-pick="${m.id}" aria-label="React">${icon("plus")}</button></div>
       ${reactionsHtml(m.id)}
       <div class="msg-time">${esc(new Date(m.created_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }))}</div>
+      ${lastMine && m.id === lastMine.id ? `<div class="msg-seen">${esc(seenText(m.id))}</div>` : ""}
     </div>`;
     lastUser = m.user_name; lastTime = t;
   }
   $("chatList").innerHTML = html;
   $("chatList").querySelectorAll("[data-rx]").forEach((b) => b.addEventListener("click", () => react(b.dataset.rx, b.dataset.emoji)));
   $("chatList").querySelectorAll("[data-pick]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); openPicker(b); }));
+  $("chatList").querySelectorAll("[data-pvote]").forEach((b) => b.addEventListener("click", () => pollAction("fund_poll_vote", { p_poll: b.dataset.pvote, p_option: Number(b.dataset.opt) })));
+  $("chatList").querySelectorAll("[data-pclose]").forEach((b) => b.addEventListener("click", () => { if (confirm("Close this poll? Nobody can vote after that.")) pollAction("fund_poll_close", { p_poll: b.dataset.pclose }); }));
 }
+
+/* ---------- read receipts ---------- */
+function seenText(id) {
+  const others = chat.people.filter((p) => p.name !== chat.me);
+  const seen = others.filter((p) => Number(p.read_id) >= id).map((p) => p.name);
+  if (!seen.length) return "Sent";
+  if (seen.length === others.length) return "Seen by everyone";
+  return seen.length <= 3 ? `Seen by ${seen.join(", ")}` : `Seen by ${seen.length} of ${others.length}`;
+}
+
+/* ---------- polls ---------- */
+function pollHtml(p) {
+  const voters = new Set(p.votes.map((v) => v.user_name));
+  const total = voters.size;
+  const mine = new Set(p.votes.filter((v) => v.user_name === chat.me).map((v) => v.option_idx));
+  const canClose = !p.closed_at && (p.created_by === chat.me || chat.people.find((x) => x.name === chat.me)?.role === "admin");
+  return `<div class="poll">
+    <div class="poll-q">${icon("chart")} <span>${esc(p.question)}</span></div>
+    <div class="poll-sub">${p.multi ? "Pick one or more" : "Pick one"} · ${total} voted${p.closed_at ? " · Closed" : ""}</div>
+    ${p.options.map((o, i) => {
+      const who = p.votes.filter((v) => v.option_idx === i).map((v) => v.user_name);
+      const pct = total ? Math.round((who.length / total) * 100) : 0;
+      return `<button type="button" class="poll-opt ${mine.has(i) ? "on" : ""}" ${p.closed_at ? "disabled" : ""} data-pvote="${p.id}" data-opt="${i}" title="${esc(who.join(", ") || "No votes yet")}">
+        <span class="poll-fill" style="width:${pct}%"></span>
+        <span class="poll-txt">${mine.has(i) ? icon("check") : ""}${esc(o)}</span><span class="poll-n">${who.length}</span></button>`;
+    }).join("")}
+    ${canClose ? `<button type="button" class="linkbtn poll-close" data-pclose="${p.id}">Close poll</button>` : ""}
+  </div>`;
+}
+async function pollAction(fn, params) {
+  try {
+    const { error } = await sb.rpc(fn, { p_name: auth.name, p_pin: auth.pin, ...params });
+    if (error) throw error;
+    await pollChat();
+  } catch (e) { toast(e.message || String(e)); }
+}
+$("pollBtn").addEventListener("click", () => {
+  openSheet("New poll", "Everyone in the chat can vote. Tap an option again to take your vote back.", `
+    <div class="auth-fields">
+      <input id="pqQ" class="fld" type="text" maxlength="200" placeholder="Question, like Lunch today?" />
+      <div id="pqOpts" class="auth-fields">
+        ${[1, 2, 3].map((n) => `<input class="fld pq-opt" type="text" maxlength="80" placeholder="Option ${n}" />`).join("")}
+      </div>
+      <button type="button" class="linkbtn" id="pqMore">+ Add option</button>
+      <label class="check"><input type="checkbox" id="pqMulti" /> Allow picking more than one</label>
+    </div>
+    <div class="auth-err sheet-err"></div>
+    <div class="modal-actions"><button class="btn ghost" id="pqCancel">Cancel</button><button class="btn primary" id="pqGo">Post poll</button></div>`,
+    (m) => {
+      m.querySelector("#pqMore").addEventListener("click", () => {
+        const n = m.querySelectorAll(".pq-opt").length;
+        if (n >= 8) return sheetError(m, "At most 8 options");
+        m.querySelector("#pqOpts").insertAdjacentHTML("beforeend", `<input class="fld pq-opt" type="text" maxlength="80" placeholder="Option ${n + 1}" />`);
+      });
+      m.querySelector("#pqCancel").addEventListener("click", closeSheet);
+      m.querySelector("#pqGo").addEventListener("click", async () => {
+        const q = m.querySelector("#pqQ").value.trim();
+        const opts = [...m.querySelectorAll(".pq-opt")].map((i) => i.value.trim()).filter(Boolean);
+        if (!q) return sheetError(m, "Write the question");
+        if (opts.length < 2) return sheetError(m, "Give at least 2 options");
+        try {
+          const { error } = await sb.rpc("fund_poll_create", { p_name: auth.name, p_pin: auth.pin, p_question: q, p_options: opts, p_multi: m.querySelector("#pqMulti").checked });
+          if (error) throw error;
+          closeSheet(); await pollChat(); scrollToBottom();
+        } catch (e) { sheetError(m, e.message || String(e)); }
+      });
+    });
+});
 function mentionify(html) {
   const names = chat.people.map((p) => p.name).concat(["all", "everyone"]).sort((a, b) => b.length - a.length);
   if (!names.length) return html;

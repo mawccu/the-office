@@ -16,6 +16,9 @@ onFund = () => {
   renderFundPlan($("fundPlan"));
   if (me.role === "admin") renderAdminWallet(pool); else renderWallet();
   renderForecast(pool);
+  const ow = F.o?.cash?.owes_admin || 0;
+  $("owesBanner").hidden = !(ow > 0) || isAdmin();
+  if (ow > 0) $("owesBanner").innerHTML = `${icon("wallet")}<span>The fund owes the admin <b>${jd(ow)}</b>. He paid more for the office than has been deposited. It evens out as members who owe make deposits.</span>`;
   $("notifList").innerHTML = notificationsHtml(F.notifications);
   wireNotifications($("notifList"));
   $("activity").hidden = me.role === "admin";

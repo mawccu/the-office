@@ -22,7 +22,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet" />
 <!-- ?v= busts the browser/Pages cache — bump it whenever js/css change -->
-<link rel="stylesheet" href="style.css?v=30" />
+<link rel="stylesheet" href="style.css?v=31" />
 </head>
 <body>
 <div class="bg-decor" aria-hidden="true"></div>
@@ -65,6 +65,14 @@
         <div class="card-head"><span>Record a purchase</span><span class="hint">Split between all members</span></div>
         <div class="card-body" id="purchaseForm"></div>
       </section>
+      <section class="card reveal" id="cash">
+        <div class="card-head"><span>Admin cash</span><span class="hint">Deposits you received vs. what you paid</span></div>
+        <div class="card-body" id="cashBody"></div>
+      </section>
+      <section class="card reveal" id="backup">
+        <div class="card-head"><span>Backups</span><span class="hint">A copy is saved on the 1st of every month</span></div>
+        <div class="card-body" id="backupBody"></div>
+      </section>
       <section class="card reveal" id="forecast">
         <div class="card-head"><span>Fund forecast</span><span class="hint">Next 30 days</span></div>
         <div class="card-body" id="adminForecast"></div>
@@ -98,11 +106,11 @@
 <div class="toast" id="toast"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="supabase.js?v=30"></script>
-<script src="config.js?v=30"></script>
-<script src="core.js?v=30"></script>
-<script src="lang.js?v=30"></script>
-<script src="fund-core.js?v=30"></script>
-<script src="admin.js?v=30"></script>
+<script src="supabase.js?v=31"></script>
+<script src="config.js?v=31"></script>
+<script src="core.js?v=31"></script>
+<script src="lang.js?v=31"></script>
+<script src="fund-core.js?v=31"></script>
+<script src="admin.js?v=31"></script>
 </body>
 </html>

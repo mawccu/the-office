@@ -141,6 +141,33 @@ const AR = {
   "No bills waiting. Bills show up here on their due day.": "لا فواتير بانتظارك. تظهر الفواتير هنا في يوم استحقاقها.",
   "Purchase": "شراء", "Bill": "فاتورة", "Move desk": "نقل المكتب", "Remove": "إزالة", "Keep it free": "أبقه شاغراً", "Add to this desk": "أضف إلى هذا المكتب",
   "Only the admin can open this page": "هذه الصفحة للمسؤول فقط",
+  // chat polls + seen
+  "Poll": "استطلاع", "New poll": "استطلاع جديد", "Post poll": "انشر الاستطلاع", "+ Add option": "+ أضف خياراً", "Allow picking more than one": "السماح باختيار أكثر من خيار",
+  "Everyone in the chat can vote. Tap an option again to take your vote back.": "يستطيع الجميع التصويت. اضغط الخيار مرة أخرى لسحب صوتك.",
+  "Question, like Lunch today?": "السؤال، مثلاً: الغداء اليوم؟", "Close poll": "أغلق الاستطلاع", "Sent": "أُرسلت", "Seen by everyone": "شاهدها الجميع",
+  "Write the question": "اكتب السؤال", "Give at least 2 options": "أعطِ خيارين على الأقل",
+  // calendar
+  "Calendar": "التقويم", "+ Add to calendar": "+ أضف إلى التقويم", "Add to calendar": "أضف إلى التقويم", "Coming up": "قادم",
+  "Event": "مناسبة", "Holiday": "عطلة", "Day off": "إجازة", "Office closed": "المكتب مغلق", "Everyone gets notified.": "سيصل إشعار للجميع.",
+  "Title (for a day off, leave empty)": "العنوان (اتركه فارغاً للإجازة)", "Note (optional)": "ملاحظة (اختياري)", "Add on this day": "أضف في هذا اليوم",
+  "Removed from the calendar": "أُزيلت من التقويم", "Added. Everyone has been notified.": "تمت الإضافة وإبلاغ الجميع.", "Saved": "تم الحفظ", "Removed": "تمت الإزالة",
+  "Nothing coming up. Add holidays, days off and office events.": "لا شيء قادم. أضف العطل والإجازات ومناسبات المكتب.",
+  // office info
+  "Office info": "معلومات المكتب", "+ Add": "+ أضف", "Show": "إظهار", "Hide": "إخفاء", "Copy": "نسخ", "Copied": "تم النسخ", "Add office info": "أضف معلومة",
+  "Only the six members and the admin can see this.": "يراها الأعضاء الستة والمسؤول فقط.", "Title, like Wi-Fi password": "العنوان، مثل كلمة مرور الواي فاي",
+  "Value": "القيمة", "Note (optional), like the network name": "ملاحظة (اختياري)، مثل اسم الشبكة",
+  "Nothing here yet. The admin can add the Wi-Fi password, door code and so on.": "لا شيء بعد. يمكن للمسؤول إضافة كلمة مرور الواي فاي ورمز الباب وغيرها.",
+  "Add the Wi-Fi password, door code, building contacts and so on. Only the fund members can see them.": "أضف كلمة مرور الواي فاي ورمز الباب وأرقام المبنى وغيرها. يراها أعضاء الصندوق فقط.",
+  // admin cash + backups
+  "Admin cash": "نقدية المسؤول", "Deposits you received vs. what you paid": "الإيداعات المستلمة مقابل ما دفعته",
+  "Members deposited (approved)": "إيداعات الأعضاء (المعتمدة)", "You paid for the office (bills and purchases)": "ما دفعته للمكتب (فواتير ومشتريات)",
+  "The fund owes you": "الصندوق مدين لك بـ", "You should be holding": "يجب أن يكون معك",
+  "This is the fund's money you're keeping for the office. It matches the Fund total.": "هذه أموال الصندوق التي تحتفظ بها للمكتب، وتساوي إجمالي الصندوق.",
+  "You've paid more out of your own pocket than members have deposited. It's paid back automatically as members who owe make deposits. You get a reminder each week until it's even.": "دفعت من جيبك أكثر مما أودعه الأعضاء. يُسترد تلقائياً عندما يودع الأعضاء المدينون. يصلك تذكير أسبوعي حتى يتساوى الحساب.",
+  "Backups": "النسخ الاحتياطية", "A copy is saved on the 1st of every month": "تُحفظ نسخة في أول كل شهر", "Download everything now (.xlsx)": "نزّل كل شيء الآن (.xlsx)",
+  "Monthly copies": "النسخ الشهرية", "Download": "تنزيل", "Backup downloaded": "تم تنزيل النسخة", "The first monthly copy is saved automatically.": "تُحفظ أول نسخة شهرية تلقائياً.",
+  "Spreadsheets open in Excel, Google Sheets or Numbers. Keep a copy somewhere safe, like your email or Google Drive.": "تفتح الجداول في Excel أو Google Sheets أو Numbers. احتفظ بنسخة في مكان آمن مثل بريدك أو Google Drive.",
+
   "Admin:": "المسؤول:", "The old storage room": "غرفة المخزن سابقاً", "Deposited vs. paid": "المودَع مقابل المدفوع",
   "to stay at zero.": "لتبقى عند الصفر.", "Members need to deposit": "يحتاج الأعضاء إلى إيداع", "in total to stay at zero.": "إجمالاً للبقاء عند الصفر.",
   "Members who'll owe after the next 30 days": "أعضاء سيصبح عليهم مبالغ خلال الـ30 يوماً القادمة", "changes monthly": "تتغير شهرياً",
@@ -162,6 +189,11 @@ const AR_MONTHS = { January: "كانون الثاني", February: "شباط", Ma
 
 // patterns for text that includes names, amounts or dates
 const AR_PATTERNS = [
+  [/^Seen by (\d+) of (\d+)$/, "شاهدها $1 من $2"], [/^Seen by (.+)$/, "شاهدها $1"], [/^Pick one · (\d+) voted(.*)$/, (m, n, c) => `اختر واحداً · صوّت ${n}${c ? " · مغلق" : ""}`],
+  [/^Pick one or more · (\d+) voted(.*)$/, (m, n, c) => `اختر واحداً أو أكثر · صوّت ${n}${c ? " · مغلق" : ""}`], [/^Option (\d+)$/, "الخيار $1"],
+  [/^Added by (.+)$/, "أضافها $1"], [/^On the calendar: (.+)$/, "في التقويم: $1"], [/^Saved (.+) · (\d+) money movements$/, "حُفظت $1 · $2 حركة مالية"],
+  [/^The fund owes the admin (.+)\. He paid more.*$/, "الصندوق مدين للمسؤول بـ$1. دفع للمكتب أكثر مما أُودع، ويتساوى الحساب عندما يودع الأعضاء المدينون."],
+  [/^The fund owes you (.+)$/, "الصندوق مدين لك بـ$1"], [/^Monthly backup saved \((.+)\)$/, (m, p) => `تم حفظ النسخة الشهرية (${arPhrase(p)})`],
   [/^([−+-]?[\d,]+\.\d{3}) JD$/, "$1 د.أ"], [/^Your (.+) statement$/, "كشف $1"],
   [/^(January|February|March|April|May|June|July|August|September|October|November|December) (\d{4})$/, (m, mo, y) => `${AR_MONTHS[mo]} ${y}`],
   [/^(\d+)([mhd]) ago$/, (m, n, u) => `منذ ${n} ${u === "m" ? "دقيقة" : u === "h" ? "ساعة" : "يوم"}`],
@@ -231,7 +263,7 @@ function arText(s) {
   const out = arPhrase(core);
   return out === core ? s : s.replace(t, lead + out + tail);
 }
-const SKIP = ".brand-name, .msg-bubble, .wish-title, .wish-reason, .bk-main b, .tx-memo, .notif-body, [data-no-i18n], script, style, code";
+const SKIP = ".brand-name, .msg-bubble:not(.poll-bubble), .poll-q, .poll-txt, .ev-main b, .cal-t, .info-val code, .info-title, .info-note, .wish-title, .wish-reason, .bk-main b, .tx-memo, .notif-body, [data-no-i18n], script, style, code";
 function translateTree(root) {
   if (LANG !== "ar" || !root) return;
   if (root.nodeType === 3) {
