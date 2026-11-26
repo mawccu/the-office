@@ -41,11 +41,12 @@ function renderWallet() {
       </div>
       <button class="btn primary wide" id="depositBtn">${icon("plus")} Deposit</button>
       ${pending.map((d) => `
-        <div class="dep-row"><div><b>${jd(d.amount_fils)}</b> · ${esc(METHOD_LABEL[d.method] || d.method)}<div class="dep-sub">Sent ${esc(fmtDate(d.created_at))}${d.note ? " · " + esc(d.note) : ""}</div></div>
+        <div class="dep-row"><div><b>${jd(d.amount_fils)}</b> · ${esc(METHOD_LABEL[d.method] || d.method)}<div class="dep-sub">Sent ${esc(fmtDate(d.created_at))}${d.note ? " · " + esc(d.note) : ""} ${photoLinks(d.id)}</div></div>
         <button class="linkbtn" data-cancel="${d.id}">Cancel</button></div>`).join("")}
       ${recent.map((d) => `<div class="dep-row rejected"><div><b>${jd(d.amount_fils)}</b> rejected<div class="dep-sub">${esc(d.reason || "")}</div></div></div>`).join("")}
     </div>`;
   $("depositBtn").addEventListener("click", openDeposit);
+  wirePhotoLinks($("wallet"));
   $("wallet").querySelectorAll("[data-cancel]").forEach((b) => b.addEventListener("click", () => {
     if (confirm("Cancel this deposit request?")) callRpc("fund_cancel_deposit", { p_id: b.dataset.cancel }, "Deposit request cancelled");
   }));
@@ -78,6 +79,7 @@ function openDeposit() {
         ${["cash", "cliq", "bank", "other"].map((m, i) => `<button type="button" class="seg-btn ${i === 0 ? "on" : ""}" data-m="${m}">${METHOD_LABEL[m]}</button>`).join("")}
       </div>
       <input id="dNote" class="fld" type="text" maxlength="120" placeholder="Note (optional), like a CliQ reference" />
+      ${photoInputHtml("dPhoto", "Add a payment screenshot (optional)")}
     </div>
     <div class="auth-err sheet-err"></div>
     <div class="modal-actions"><button class="btn ghost" id="dCancel">Cancel</button><button class="btn primary" id="dSend">Send request</button></div>`,
@@ -86,12 +88,20 @@ function openDeposit() {
       m.querySelectorAll(".seg-btn").forEach((b) => b.addEventListener("click", () => {
         method = b.dataset.m; m.querySelectorAll(".seg-btn").forEach((x) => x.classList.toggle("on", x === b));
       }));
+      const photo = wirePhotoInput(m, "dPhoto");
       m.querySelector("#dCancel").addEventListener("click", closeSheet);
       m.querySelector("#dSend").addEventListener("click", async () => {
         const amt = parseJD(m.querySelector("#dAmt").value);
         if (!amt) return sheetError(m, "Enter an amount in JD, up to 3 decimals");
-        const ok = await callRpc("fund_request_deposit", { p_amount: amt, p_method: method, p_note: m.querySelector("#dNote").value }, "Deposit sent to the admin");
-        if (ok) closeSheet();
+        const btn = m.querySelector("#dSend"); btn.disabled = true;
+        try {
+          const { data: id, error } = await sb.rpc("fund_request_deposit", { p_name: auth.name, p_pin: auth.pin, p_amount: amt, p_method: method, p_note: m.querySelector("#dNote").value });
+          if (error) throw error;
+          await uploadPhoto(id, photo());
+          toast("Deposit sent to the admin");
+          closeSheet();
+          await loadFund();
+        } catch (e) { sheetError(m, e.message || String(e)); } finally { btn.disabled = false; }
       });
     });
 }
@@ -119,12 +129,13 @@ function renderTx() {
     const after = run; run -= t.amount_fils;
     return `<div class="tx-row k-${esc(t.kind)}">
       <span class="tx-ico">${icon(t.kind === "deposit" ? "wallet" : t.kind === "bill" ? "calendar" : "receipt")}</span>
-      <span class="tx-main"><span class="tx-memo">${esc(t.memo)}</span><span class="tx-when">${esc(fmtDate(t.created_at))}</span></span>
+      <span class="tx-main"><span class="tx-memo">${esc(t.memo)}</span><span class="tx-when">${esc(fmtDate(t.created_at))} ${t.ref_id ? photoLinks(t.ref_id) : ""}</span></span>
       <span class="tx-amt ${t.amount_fils > 0 ? "in" : "out"}">${jdSigned(t.amount_fils)}</span>
       <span class="tx-run">${esc(balanceText(after))}</span>
     </div>`;
   }).join("");
   $("txList").innerHTML = rows || emptyBlock("No money movements yet. Make your first deposit above.");
+  wirePhotoLinks($("txList"));
 }
 
 /* ---------- statements ---------- */
@@ -133,8 +144,8 @@ function renderStatements() {
   $("stmtList").innerHTML = list.length ? list.map((s) => `
     <button class="stmt-row" data-p="${s.period}">
       <span class="stmt-month">${esc(fmtMonth(s.period))}</span>
-      <span class="stmt-fig">In <b class="in">${jdShort(s.in_fils)}</b></span>
-      <span class="stmt-fig">Out <b class="out">${jdShort(s.out_fils)}</b></span>
+      <span class="stmt-fig">Money in <b class="in">${jdShort(s.in_fils)}</b></span>
+      <span class="stmt-fig">Money out <b class="out">${jdShort(s.out_fils)}</b></span>
       <span class="stmt-fig">Closing <b class="${s.closing_fils < 0 ? "out" : ""}">${esc(balanceText(s.closing_fils))}</b></span>
     </button>`).join("")
     : emptyBlock("Your first statement arrives on the 1st of next month.");

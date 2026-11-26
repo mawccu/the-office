@@ -70,6 +70,13 @@ const ICON_PATHS = {
   x: '<path d="M6 6l12 12M18 6L6 18"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
   chat: '<path d="M4 5.5h16v10H9l-5 4z"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2.5v2M12 19.5v2M2.5 12h2M19.5 12h2M5.3 5.3l1.4 1.4M17.3 17.3l1.4 1.4M5.3 18.7l1.4-1.4M17.3 6.7l1.4-1.4"/>',
+  moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>',
+  gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
+  clip: '<path d="M20 11.5l-8.1 8.1a5 5 0 0 1-7.1-7.1l8.5-8.5a3.3 3.3 0 0 1 4.7 4.7l-8.5 8.5a1.7 1.7 0 0 1-2.4-2.4l7.8-7.8"/>',
+  door: '<path d="M5 21V4a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v17"/><path d="M3 21h18"/><circle cx="15" cy="12.5" r="1" fill="currentColor" stroke="none"/>',
+  users: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.6a3.5 3.5 0 0 1 0 6.8M18 14.5a6.5 6.5 0 0 1 3.5 5.5"/>',
+  sweep: '<path d="M14 3l7 7"/><path d="M11 6l7 7-6 6a3 3 0 0 1-4.2 0L4 15.2a3 3 0 0 1 0-4.2z"/><path d="M7 12l5 5"/>',
   chart: '<path d="M4 20h16"/><path d="M7 16V11M12 16V6M17 16v-3"/>',
   calendar: '<rect x="4" y="5.5" width="16" height="14.5" rx="1.5"/><path d="M4 10h16M8.5 3.5v4M15.5 3.5v4"/>',
   heart: '<path fill="currentColor" stroke="none" d="M12 21s-7.4-4.6-9.7-9.3A5.2 5.2 0 0 1 12 6.1a5.2 5.2 0 0 1 9.7 5.6C19.4 16.4 12 21 12 21z"/>',
@@ -99,7 +106,9 @@ function toast(msg) {
 const NAV = [
   { key: "fund",     label: "Fund",     href: "fund.html" },
   { key: "expenses", label: "Expenses", href: "expenses.html" },
+  { key: "office",   label: "Office",   href: "office.html" },
   { key: "chat",     label: "Chat",     href: "chat.html" },
+  { key: "reports",  label: "Reports",  href: "reports.html" },
   { key: "admin",    label: "Admin",    href: "admin.html", adminOnly: true },
 ];
 let navActive = null;
@@ -118,6 +127,35 @@ function renderNav(active) {
   if (bm && !bm.querySelector("svg")) bm.innerHTML = icon("building");
   const brand = document.querySelector("a.brand");
   if (brand) brand.setAttribute("href", "fund.html");
+  renderTopTools();
+}
+
+/* ============================================================
+   Theme (light / dark) + language switch + settings link
+   ============================================================ */
+function currentTheme() { return document.documentElement.dataset.theme === "dark" ? "dark" : "light"; }
+function setTheme(t) {
+  if (t === "dark") document.documentElement.dataset.theme = "dark"; else delete document.documentElement.dataset.theme;
+  try { localStorage.setItem("theme", t); } catch {}
+  const m = document.querySelector('meta[name="theme-color"]');
+  if (m) m.setAttribute("content", t === "dark" ? "#141413" : "#111110");
+  renderTopTools();
+  document.dispatchEvent(new CustomEvent("themechange"));
+}
+function renderTopTools() {
+  const el = document.getElementById("topTools");
+  if (!el) return;
+  const dark = currentTheme() === "dark";
+  const ar = (document.documentElement.lang || "en") === "ar";
+  el.innerHTML = `
+    <button class="tool-btn" id="langBtn" type="button" title="${ar ? "English" : "العربية"}" aria-label="${ar ? "Switch to English" : "التبديل إلى العربية"}">${ar ? "EN" : "ع"}</button>
+    <button class="tool-btn" id="themeBtn" type="button" title="${dark ? "Light mode" : "Dark mode"}" aria-label="${dark ? "Light mode" : "Dark mode"}">${icon(dark ? "sun" : "moon")}</button>
+    <a class="tool-btn" href="settings.html" title="Settings" aria-label="Settings">${icon("gear")}</a>`;
+  document.getElementById("themeBtn").addEventListener("click", () => setTheme(dark ? "light" : "dark"));
+  document.getElementById("langBtn").addEventListener("click", () => { if (typeof setLang === "function") setLang(ar ? "en" : "ar"); });
+}
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));
 }
 
 /* ============================================================

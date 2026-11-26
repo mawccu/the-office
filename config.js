@@ -11,7 +11,8 @@ const FUND_PLAN = {
   view: { x: 940, y: 92, w: 707, h: 961 },
   rooms: [
     { id: "kitchen", name: "Kitchen", x: 966, y: 118, w: 371, h: 342, active: true, lx: 990, ly: 166 },
-    { id: "storage", name: "Storage", x: 1337, y: 118, w: 284, h: 342 },
+    // the old storage room is now the bookable meeting room
+    { id: "meeting", name: "Meeting room", x: 1337, y: 118, w: 284, h: 342, meeting: true },
     { id: "sink",    name: "Sink",    x: 1203, y: 330, w: 134, h: 130 },
     { id: "desks",   name: "Desks",   x: 1262, y: 460, w: 359, h: 567, active: true, lx: 1284, ly: 506 },
     { id: "wc",      name: "WC",      x: 1495, y: 460, w: 126, h: 212 },

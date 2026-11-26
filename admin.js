@@ -46,9 +46,10 @@ function renderDeposits() {
   $("depList").innerHTML = list.length ? list.map((d) => `
     <div class="adm-row">
       <div class="adm-main"><b>${esc(d.user_name)} · ${jd(d.amount_fils)}</b>
-        <span class="adm-sub">${esc(METHOD_LABEL[d.method] || d.method)}${d.note ? " · " + esc(d.note) : ""} · ${esc(fmtDate(d.created_at))}</span></div>
+        <span class="adm-sub">${esc(METHOD_LABEL[d.method] || d.method)}${d.note ? " · " + esc(d.note) : ""} · ${esc(fmtDate(d.created_at))} ${photoLinks(d.id)}</span></div>
       <div class="adm-act"><button class="btn ghost small" data-rej="${d.id}">Reject</button><button class="btn primary small" data-ok="${d.id}">Approve</button></div>
     </div>`).join("") : emptyBlock("No deposits waiting.");
+  wirePhotoLinks($("depList"));
   $("depList").querySelectorAll("[data-ok]").forEach((b) => b.addEventListener("click", () => {
     const d = list.find((x) => x.id === b.dataset.ok);
     if (confirm(`Approve ${jd(d.amount_fils)} from ${d.user_name}? Only do this once you have the money.`))
@@ -166,6 +167,7 @@ function renderPurchase(ready) {
       <input id="buyTitle" class="fld" type="text" maxlength="120" placeholder="What you bought, like TV" value="${esc(purchaseDraft.title)}" />
       <input id="buyTotal" class="fld" type="text" inputmode="decimal" placeholder="Total paid in JD" value="${esc(purchaseDraft.total)}" />
       <input id="buyNote" class="fld" type="text" maxlength="160" placeholder="Note (optional), like the shop" value="${esc(purchaseDraft.note)}" />
+      ${photoInputHtml("buyPhoto", "Add the receipt photo (optional)")}
     </div>
     <div class="split-preview" id="buySplit"></div>
     <button class="btn primary wide" id="buyGo">Charge everyone</button>`;
@@ -185,12 +187,21 @@ function renderPurchase(ready) {
     renderPurchase(ready);
   });
   upd();
+  const buyPhoto = wirePhotoInput($("purchaseForm"), "buyPhoto");
   $("buyGo").addEventListener("click", async () => {
     const title = $("buyTitle").value.trim(), v = parseJD($("buyTotal").value);
     if (!title) return toast("Say what you bought");
     if (!v) return toast("Enter the total in JD, up to 3 decimals");
     if (!confirm(`Charge ${jd(Math.round(v * 1000))} for “${title}”?\n${splitText(Math.round(v * 1000))}.\nEveryone gets notified.`)) return;
-    const ok = await callRpc("fund_record_purchase", { p_title: title, p_total: v, p_note: $("buyNote").value, p_proposal: purchaseDraft.proposal || null }, "Purchase recorded. Everyone has been notified.");
+    let ok = false;
+    try {
+      const { data: pid, error } = await sb.rpc("fund_record_purchase", { p_name: auth.name, p_pin: auth.pin, p_title: title, p_total: v, p_note: $("buyNote").value, p_proposal: purchaseDraft.proposal || null });
+      if (error) throw error;
+      await uploadPhoto(pid, buyPhoto());
+      toast("Purchase recorded. Everyone has been notified.");
+      ok = true;
+      await loadFund();
+    } catch (e) { toast(e.message || String(e)); }
     if (ok) { purchaseDraft = { title: "", total: "", note: "", proposal: "" }; history.replaceState(null, "", "admin.html#purchase"); renderPurchase(F.proposals.filter((p) => p.status === "approved")); }
   });
 }
@@ -268,10 +279,16 @@ function renderEvents() {
   const TYPE = { purchase: "Purchase", bill: "Bill", deposit: "Deposit" };
   $("eventList").innerHTML = ev.length ? ev.map((e) => `
     <div class="adm-row ${e.reversed ? "off" : ""}">
-      <span class="adm-main"><b>${esc(e.label)}</b><span class="adm-sub">${TYPE[e.type]} · ${esc(fmtDate(e.at))}${e.reversed ? ` · reversed: ${esc(e.reason || "")}` : ""}</span></span>
+      <span class="adm-main"><b>${esc(e.label)}</b><span class="adm-sub">${TYPE[e.type]} · ${esc(fmtDate(e.at))}${e.reversed ? ` · reversed: ${esc(e.reason || "")}` : ""} ${photoLinks(e.ref)}
+        ${photosFor(e.ref).length < 3 ? `<label class="photo-link add">${icon("clip")}Add photo<input type="file" accept="image/*" hidden data-addphoto="${e.ref}"></label>` : ""}</span></span>
       <span class="adm-amt">${jd(e.total_fils)}</span>
       ${e.reversed ? `<span class="pill">Reversed</span>` : `<button class="linkbtn" data-rev="${e.ref}">Reverse</button>`}
     </div>`).join("") : emptyBlock("Nothing yet.");
+  wirePhotoLinks($("eventList"));
+  $("eventList").querySelectorAll("[data-addphoto]").forEach((inp) => inp.addEventListener("change", async () => {
+    if (!inp.files[0]) return;
+    if (await uploadPhoto(inp.dataset.addphoto, inp.files[0])) { toast("Photo added"); loadFund(); }
+  }));
   $("eventList").querySelectorAll("[data-rev]").forEach((b) => b.addEventListener("click", () => {
     const e = ev.find((x) => x.ref === b.dataset.rev);
     openSheet(`Reverse “${e.label}”?`, `${e.type === "deposit" ? "The deposit is taken back off their balance." : "Everyone gets their share back."} The original stays in the history, and everyone involved is notified.`, `

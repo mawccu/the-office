@@ -1,0 +1,86 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>Reports · The Office</title>
+<meta name="theme-color" content="#111110" />
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="icon" href="icons/icon-192.png" />
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-title" content="The Office" />
+<script>
+  // theme + language before first paint (no flash)
+  (function () { try {
+    var t = localStorage.getItem("theme"), l = localStorage.getItem("lang"), d = document.documentElement;
+    if (t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches)) d.dataset.theme = "dark";
+    if (l === "ar") { d.lang = "ar"; d.dir = "rtl"; }
+  } catch (e) {} })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<!-- ?v= busts the browser/Pages cache — bump it whenever js/css change -->
+<link rel="stylesheet" href="style.css?v=30" />
+</head>
+<body>
+<div class="bg-decor" aria-hidden="true"></div>
+
+<header class="top">
+  <a class="brand" href="fund.html">
+    <span class="brand-mark"></span>
+    <span class="brand-name">The<span>Office</span></span>
+  </a>
+  <nav class="mainnav" id="mainnav"></nav>
+  <div class="top-tools" id="topTools"></div>
+  <div class="whoami" id="whoami"></div>
+</header>
+
+<main>
+  <section class="intro reveal">
+    <div class="intro-head">
+      <div>
+        <h1 class="display">Reports.</h1>
+        <p class="lede">Where the office money goes each month, and what each member has put in and paid.</p>
+      </div>
+      <button class="btn ghost small" id="tableToggle" type="button">Show as tables</button>
+    </div>
+  </section>
+
+  <section id="fundGate" class="card narrow-gate reveal" hidden></section>
+
+  <div id="fundBody" hidden>
+    <div class="metric-row" id="tiles"></div>
+    <div class="reports-grid">
+      <section class="card reveal">
+        <div class="card-head"><span>Spending by month</span><span class="hint">Bills and purchases</span></div>
+        <div class="card-body chart-box" id="spendChart"></div>
+        <div class="chart-legend" id="spendLegend"></div>
+        <div class="table-wrap" id="spendTable"></div>
+      </section>
+      <section class="card reveal">
+        <div class="card-head"><span>Each member</span><span class="hint">Deposited vs. paid</span></div>
+        <div class="card-body chart-box" id="peopleChart"></div>
+        <div class="chart-legend" id="peopleLegend"></div>
+        <div class="table-wrap" id="peopleTable"></div>
+      </section>
+    </div>
+  </div>
+</main>
+
+<div class="overlay" id="authOverlay">
+  <div class="modal"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase.js?v=30"></script>
+<script src="config.js?v=30"></script>
+<script src="core.js?v=30"></script>
+<script src="lang.js?v=30"></script>
+<script src="fund-core.js?v=30"></script>
+<script src="reports.js?v=30"></script>
+</body>
+</html>

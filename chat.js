@@ -7,7 +7,8 @@
 renderNav("chat");
 
 const $ = (id) => document.getElementById(id);
-const chat = { msgs: [], lastId: 0, people: [], me: null, started: false, busy: false, timer: null };
+const chat = { msgs: [], lastId: 0, people: [], me: null, started: false, busy: false, timer: null, rx: {}, rxKey: "" };
+const EMOJIS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 
 onFund = () => {
   if (chat.started) return;
@@ -27,6 +28,13 @@ async function pollChat(first) {
     chat.me = data.me;
     chat.people = data.people || [];
     if (F) F.people = chat.people;
+    const rxKey = JSON.stringify(data.reactions || []);
+    const rxChanged = rxKey !== chat.rxKey;
+    if (rxChanged) {
+      chat.rxKey = rxKey; chat.rx = {};
+      (data.reactions || []).forEach((r) => { (chat.rx[r.message_id] = chat.rx[r.message_id] || []).push(r); });
+    }
+    if (!data.messages.length && rxChanged && !first) renderMessages();
     if (data.messages.length) {
       const nearBottom = isNearBottom();
       chat.msgs.push(...data.messages);
@@ -72,13 +80,49 @@ function renderMessages() {
     const isAdminMsg = person?.role === "admin";
     html += `<div class="msg ${mine ? "mine" : ""} ${grouped ? "grouped" : ""}">
       ${!mine && !grouped ? `<div class="msg-who">${esc(m.user_name)}${isAdminMsg ? ` <span class="msg-tag">admin</span>` : ""}</div>` : ""}
-      <div class="msg-bubble">${linkify(esc(m.body)).replace(/\n/g, "<br>")}</div>
+      <div class="msg-line"><div class="msg-bubble">${mentionify(linkify(esc(m.body))).replace(/\n/g, "<br>")}</div>
+        <button class="rx-add" type="button" data-pick="${m.id}" aria-label="React">${icon("plus")}</button></div>
+      ${reactionsHtml(m.id)}
       <div class="msg-time">${esc(new Date(m.created_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }))}</div>
     </div>`;
     lastUser = m.user_name; lastTime = t;
   }
   $("chatList").innerHTML = html;
+  $("chatList").querySelectorAll("[data-rx]").forEach((b) => b.addEventListener("click", () => react(b.dataset.rx, b.dataset.emoji)));
+  $("chatList").querySelectorAll("[data-pick]").forEach((b) => b.addEventListener("click", (e) => { e.stopPropagation(); openPicker(b); }));
 }
+function mentionify(html) {
+  const names = chat.people.map((p) => p.name).concat(["all", "everyone"]).sort((a, b) => b.length - a.length);
+  if (!names.length) return html;
+  const re = new RegExp(`(^|\\s|>)@(${names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})\\b`, "gi");
+  return html.replace(re, (m0, pre, name) => {
+    const me = chat.me && (name.toLowerCase() === chat.me.toLowerCase() || /^(all|everyone)$/i.test(name));
+    return `${pre}<span class="mention${me ? " me" : ""}">@${esc(name)}</span>`;
+  });
+}
+function reactionsHtml(id) {
+  const list = chat.rx[id];
+  if (!list?.length) return "";
+  return `<div class="rx-row">${list.map((r) => `<button type="button" class="rx ${r.users.includes(chat.me) ? "on" : ""}" data-rx="${id}" data-emoji="${r.emoji}" title="${esc(r.users.join(", "))}">${r.emoji} <span>${r.users.length}</span></button>`).join("")}</div>`;
+}
+async function react(id, emoji) {
+  closePicker();
+  try {
+    const { error } = await sb.rpc("fund_react", { p_name: auth.name, p_pin: auth.pin, p_message: Number(id), p_emoji: emoji });
+    if (error) throw error;
+    await pollChat();
+  } catch (e) { toast(e.message || String(e)); }
+}
+function closePicker() { document.querySelector(".rx-picker")?.remove(); }
+function openPicker(btn) {
+  closePicker();
+  const p = document.createElement("div");
+  p.className = "rx-picker";
+  p.innerHTML = EMOJIS.map((e) => `<button type="button" data-e="${e}">${e}</button>`).join("");
+  btn.closest(".msg-line").appendChild(p);
+  p.querySelectorAll("button").forEach((b) => b.addEventListener("click", (ev) => { ev.stopPropagation(); react(btn.dataset.pick, b.dataset.e); }));
+}
+document.addEventListener("click", closePicker);
 
 /* ---------- people ---------- */
 function renderPeople() {
@@ -99,7 +143,45 @@ function renderPeople() {
 /* ---------- compose ---------- */
 const input = $("chatInput");
 input.addEventListener("input", () => { input.style.height = "auto"; input.style.height = Math.min(input.scrollHeight, 160) + "px"; });
+let mentionSel = 0;
+function mentionQuery() {
+  const upto = input.value.slice(0, input.selectionStart);
+  const m = upto.match(/(^|\s)@([\p{L}\p{N}_]*)$/u);
+  return m ? m[2] : null;
+}
+function mentionOptions(q) {
+  const opts = chat.people.map((p) => p.name).filter((n) => n !== chat.me).concat(["all"]);
+  return opts.filter((n) => n.toLowerCase().startsWith((q || "").toLowerCase())).slice(0, 6);
+}
+function renderMentionBox() {
+  const q = mentionQuery();
+  let box = $("mentionBox");
+  const opts = q === null ? [] : mentionOptions(q);
+  if (!opts.length) { box?.remove(); return; }
+  if (!box) { box = document.createElement("div"); box.id = "mentionBox"; box.className = "mention-box"; $("chatForm").appendChild(box); }
+  mentionSel = Math.min(mentionSel, opts.length - 1);
+  box.innerHTML = opts.map((n, i) => `<button type="button" class="${i === mentionSel ? "on" : ""}" data-m="${esc(n)}">@${esc(n)}${n === "all" ? " <span>everyone</span>" : ""}</button>`).join("");
+  box.querySelectorAll("[data-m]").forEach((b) => b.addEventListener("mousedown", (e) => { e.preventDefault(); insertMention(b.dataset.m); }));
+}
+function insertMention(name) {
+  const pos = input.selectionStart, upto = input.value.slice(0, pos), rest = input.value.slice(pos);
+  const start = upto.lastIndexOf("@");
+  input.value = upto.slice(0, start) + "@" + name + " " + rest;
+  const caret = start + name.length + 2;
+  input.setSelectionRange(caret, caret); input.focus();
+  $("mentionBox")?.remove();
+}
+input.addEventListener("input", () => { mentionSel = 0; renderMentionBox(); });
+input.addEventListener("blur", () => setTimeout(() => $("mentionBox")?.remove(), 150));
 input.addEventListener("keydown", (e) => {
+  const box = $("mentionBox");
+  if (box) {
+    const n = box.querySelectorAll("[data-m]").length;
+    if (e.key === "ArrowDown") { e.preventDefault(); mentionSel = (mentionSel + 1) % n; renderMentionBox(); return; }
+    if (e.key === "ArrowUp") { e.preventDefault(); mentionSel = (mentionSel - 1 + n) % n; renderMentionBox(); return; }
+    if (e.key === "Enter" || e.key === "Tab") { e.preventDefault(); insertMention(box.querySelectorAll("[data-m]")[mentionSel].dataset.m); return; }
+    if (e.key === "Escape") { box.remove(); return; }
+  }
   if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); $("chatForm").requestSubmit(); }
 });
 $("chatForm").addEventListener("submit", async (e) => {

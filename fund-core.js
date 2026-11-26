@@ -74,8 +74,12 @@ async function loadFund() {
     const { data, error } = await sb.rpc("fund_dashboard", { p_name: auth.name, p_pin: auth.pin });
     if (error) throw error;
     F = data;
-    const pr = await sb.rpc("fund_people", { p_name: auth.name, p_pin: auth.pin });
+    const [pr, ex] = await Promise.all([
+      sb.rpc("fund_people", { p_name: auth.name, p_pin: auth.pin }),
+      sb.rpc("fund_extras", { p_name: auth.name, p_pin: auth.pin }),
+    ]);
     F.people = pr.error ? [] : (pr.data || []);
+    F.x = ex.error ? { attachments: [], checkins: [], chores: [], bookings: [], settings: {} } : ex.data;
     localStorage.setItem("fund_role", F.me.role);
     renderNav();
     setBell(F.unread);
@@ -115,6 +119,77 @@ function lastSeenText(p) {
 }
 function presenceDot(p) { return `<span class="pres-dot ${p?.active ? "on" : ""}" aria-hidden="true"></span>`; }
 
+function inOffice(name) { const c = F?.x?.checkins?.find((x) => x.name === name); return !!(c && !c.out_at); }
+function fmtTime(iso) { return new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }); }
+function meetingStatus() {
+  const now = Date.now();
+  const list = (F?.x?.bookings || []).filter((b) => new Date(b.ends_at) > now).sort((a, b) => new Date(a.starts_at) - new Date(b.starts_at));
+  const cur = list.find((b) => new Date(b.starts_at) <= now);
+  const next = list.find((b) => new Date(b.starts_at) > now);
+  const dayOf = (iso) => { const d = new Date(iso), t = new Date(); return d.toDateString() === t.toDateString() ? "" : d.toLocaleDateString([], { weekday: "short" }) + " "; };
+  if (cur) return { busy: true, line: `Busy until ${fmtTime(cur.ends_at)}, ${cur.user_name}`, short1: `${cur.user_name} until ${fmtTime(cur.ends_at)}`, short2: next ? `Next ${dayOf(next.starts_at)}${fmtTime(next.starts_at)}` : "" };
+  if (next) return { busy: false, line: `Free. Next: ${dayOf(next.starts_at)}${fmtTime(next.starts_at)}, ${next.user_name}`, short1: `Next ${dayOf(next.starts_at)}${fmtTime(next.starts_at)}`, short2: next.user_name };
+  return { busy: false, line: "Free, nothing booked", short1: "Nothing booked", short2: "" };
+}
+
+// ---- receipts / photos ----
+function photosFor(ref) { return (F?.x?.attachments || []).filter((a) => a.ref_id === ref); }
+function photoLinks(ref) {
+  const p = photosFor(ref);
+  return p.map((a, i) => `<button type="button" class="photo-link" data-photo="${a.id}">${icon("clip")}${p.length > 1 ? `Photo ${i + 1}` : "Photo"}</button>`).join("");
+}
+function wirePhotoLinks(root) {
+  root.querySelectorAll("[data-photo]").forEach((b) => b.addEventListener("click", (e) => { e.preventDefault(); e.stopPropagation(); openPhoto(b.dataset.photo); }));
+}
+async function openPhoto(id) {
+  openSheet("Photo", "", `<div class="photo-view"><div class="photo-loading">Loading…</div></div><div class="modal-actions"><button class="btn ghost" id="phClose">Close</button></div>`,
+    (m) => m.querySelector("#phClose").addEventListener("click", closeSheet));
+  const { data, error } = await sb.rpc("fund_attachment", { p_name: auth.name, p_pin: auth.pin, p_id: id });
+  const box = document.querySelector("#sheetOverlay .photo-view");
+  if (!box) return;
+  box.innerHTML = error || !data ? `<div class="photo-loading">Couldn't load the photo.</div>` : `<img src="${data}" alt="Receipt photo" />`;
+}
+// shrink a photo to a JPEG data URL under ~600 KB before uploading
+function compressImage(file) {
+  return new Promise((resolve, reject) => {
+    if (!file || !/^image\//.test(file.type)) return reject(new Error("Pick a photo"));
+    const img = new Image();
+    img.onload = () => {
+      let max = 1400, q = 0.72, out = "";
+      for (let i = 0; i < 6; i++) {
+        const k = Math.min(1, max / Math.max(img.width, img.height));
+        const c = document.createElement("canvas");
+        c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+        c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+        out = c.toDataURL("image/jpeg", q);
+        if (out.length < 600000) break;
+        max *= 0.8; q -= 0.08;
+      }
+      URL.revokeObjectURL(img.src);
+      out.length < 690000 ? resolve(out) : reject(new Error("That photo is too big"));
+    };
+    img.onerror = () => reject(new Error("Couldn't read that photo"));
+    img.src = URL.createObjectURL(file);
+  });
+}
+async function uploadPhoto(ref, file) {
+  if (!file) return true;
+  try {
+    const data = await compressImage(file);
+    const { error } = await sb.rpc("fund_attach", { p_name: auth.name, p_pin: auth.pin, p_ref: ref, p_data: data });
+    if (error) throw error;
+    return true;
+  } catch (e) { toast(e.message || String(e)); return false; }
+}
+function photoInputHtml(id, label = "Add a photo (optional)") {
+  return `<label class="photo-pick">${icon("clip")}<span data-photo-label>${esc(label)}</span><input id="${id}" type="file" accept="image/*" hidden /></label>`;
+}
+function wirePhotoInput(root, id) {
+  const inp = root.querySelector("#" + id);
+  inp?.addEventListener("change", () => { const l = inp.closest(".photo-pick").querySelector("[data-photo-label]"); l.textContent = inp.files[0] ? inp.files[0].name : "Add a photo (optional)"; });
+  return () => inp?.files?.[0] || null;
+}
+
 function memberCount() { return F ? F.members.length : 0; }
 function memberByDesk(id) { return F?.members.find((m) => m.desk_id === id) || null; }
 function isAdmin() { return F?.me.role === "admin"; }
@@ -144,9 +219,18 @@ function sheetError(m, msg) { const e = m.querySelector(".sheet-err"); if (e) e.
 function renderFundPlan(el, opts = {}) {
   if (!el || !F) return;
   const P = FUND_PLAN, v = P.view;
-  const rooms = P.rooms.map((r) => `
-    <rect class="fp-room ${r.active ? "active" : "inactive"}" x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}"></rect>`).join("");
-  const labels = P.rooms.map((r) => r.active
+  const mr = meetingStatus();
+  const rooms = P.rooms.map((r) => r.meeting
+    ? `<g class="fp-meeting ${mr.busy ? "busy" : "free"}" tabindex="0" role="button" aria-label="Meeting room: ${esc(mr.line)}">
+         <rect class="fp-room meeting" x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}"></rect>
+         <text class="fp-area" x="${r.x + 22}" y="${r.y + 48}">${esc(r.name)}</text>
+         <text class="fp-mr-state" x="${r.x + 22}" y="${r.y + 96}">${esc(mr.busy ? "Busy now" : "Free now")}</text>
+         <text class="fp-mr-line" x="${r.x + 22}" y="${r.y + 132}">${esc(mr.short1)}</text>
+         <text class="fp-mr-line" x="${r.x + 22}" y="${r.y + 162}">${esc(mr.short2)}</text>
+         <text class="fp-mr-cta" x="${r.x + 22}" y="${r.y + r.h - 28}">Tap to book</text>
+       </g>`
+    : `<rect class="fp-room ${r.active ? "active" : "inactive"}" x="${r.x}" y="${r.y}" width="${r.w}" height="${r.h}"></rect>`).join("");
+  const labels = P.rooms.filter((r) => !r.meeting).map((r) => r.active
     ? `<text class="fp-area" x="${r.lx}" y="${r.ly}">${esc(r.name)}</text>`
     : `<text class="fp-muted" x="${r.x + r.w / 2}" y="${r.y + r.h / 2}" text-anchor="middle" dominant-baseline="central">${esc(r.name)}</text>`).join("");
   const walls = P.walls.map((w) => wallSegs(w).map(([a, b]) => `<line class="fp-wall" x1="${a[0]}" y1="${a[1]}" x2="${b[0]}" y2="${b[1]}"></line>`).join("")).join("");
@@ -168,7 +252,8 @@ function renderFundPlan(el, opts = {}) {
       <text class="fp-name" x="${cx}" y="${d.y + 44}" text-anchor="middle">${esc(nm)}</text>
       <text class="fp-bal" x="${cx}" y="${d.y + 78}" text-anchor="middle">${esc(bal)}</text>
       ${m.pending_fils > 0 ? `<circle class="fp-pend" cx="${d.x + d.w - 14}" cy="${d.y + 14}" r="8"></circle>` : ""}
-      ${personByName(m.name)?.active ? `<circle class="fp-active" cx="${d.x + 14}" cy="${d.y + 14}" r="8"><title>Active now</title></circle>` : ""}</g>`;
+      ${personByName(m.name)?.active ? `<circle class="fp-active" cx="${d.x + 14}" cy="${d.y + 14}" r="8"><title>Active now</title></circle>` : ""}
+      ${inOffice(m.name) ? `<g class="fp-in"><rect x="${d.x + d.w - 46}" y="${d.y + d.h - 15}" width="52" height="26" rx="13"></rect><text x="${d.x + d.w - 20}" y="${d.y + d.h + 3}" text-anchor="middle">In</text></g>` : ""}</g>`;
   }).join("");
   el.innerHTML = `
     <svg class="fp-svg" viewBox="${v.x} ${v.y} ${v.w} ${v.h}" role="img" aria-label="Malek's office floor plan with each member's desk and balance">
@@ -177,9 +262,11 @@ function renderFundPlan(el, opts = {}) {
     <div class="fp-legend">
       <span><i class="sw ok"></i>In credit</span><span><i class="sw low"></i>Under 10 JD</span>
       <span><i class="sw owed"></i>Owes money</span><span><i class="sw free"></i>Free desk</span>
-      <span><i class="sw pend"></i>Deposit waiting</span><span><i class="sw act"></i>Active now</span>
+      <span><i class="sw pend"></i>Deposit waiting</span><span><i class="sw act"></i>Active now</span><span><i class="sw in"></i>In the office today</span>
     </div>
     <div class="fp-admin">Admin: ${F.admins.map((a) => `${presenceDot(personByName(a))}<b>${esc(a)}</b> · ${esc(lastSeenText(personByName(a)))}`).join(", ") || "—"} · no desk, no share, no vote</div>`;
+  el.querySelector(".fp-meeting")?.addEventListener("click", () => { location.href = "office.html#meeting"; });
+  el.querySelector(".fp-meeting")?.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") location.href = "office.html#meeting"; });
   el.querySelectorAll(".fp-desk").forEach((g) => {
     const open = () => (opts.onDesk || showDeskCard)(g.dataset.desk);
     g.addEventListener("click", open);
@@ -260,6 +347,7 @@ const NOTIF_ICON = {
   deposit_approved: "wallet", deposit_rejected: "x", deposit_request: "wallet", purchase: "receipt", bill: "calendar",
   bill_due: "calendar", owed: "bolt", reversal: "receipt", proposal_new: "bag", proposal_approved: "check",
   proposal_rejected: "x", proposal_expired: "x", proposal_withdrawn: "x", vote_reminder: "bell", statement: "chart", welcome: "sparkle",
+  mention: "chat", chore: "sweep", test: "bell",
 };
 function notificationsHtml(list) {
   if (!list.length) return emptyBlock("Nothing yet. Every change to your money will show up here.");

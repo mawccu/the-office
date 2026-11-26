@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+<title>Office · The Office</title>
+<meta name="theme-color" content="#111110" />
+<link rel="manifest" href="manifest.webmanifest" />
+<link rel="icon" href="icons/icon-192.png" />
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+<meta name="apple-mobile-web-app-capable" content="yes" />
+<meta name="apple-mobile-web-app-title" content="The Office" />
+<script>
+  // theme + language before first paint (no flash)
+  (function () { try {
+    var t = localStorage.getItem("theme"), l = localStorage.getItem("lang"), d = document.documentElement;
+    if (t === "dark" || (!t && matchMedia("(prefers-color-scheme: dark)").matches)) d.dataset.theme = "dark";
+    if (l === "ar") { d.lang = "ar"; d.dir = "rtl"; }
+  } catch (e) {} })();
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<!-- ?v= busts the browser/Pages cache — bump it whenever js/css change -->
+<link rel="stylesheet" href="style.css?v=30" />
+</head>
+<body>
+<div class="bg-decor" aria-hidden="true"></div>
+
+<header class="top">
+  <a class="brand" href="fund.html">
+    <span class="brand-mark"></span>
+    <span class="brand-name">The<span>Office</span></span>
+  </a>
+  <nav class="mainnav" id="mainnav"></nav>
+  <div class="top-tools" id="topTools"></div>
+  <div class="whoami" id="whoami"></div>
+</header>
+
+<main>
+  <section class="intro reveal">
+    <h1 class="display">Office.</h1>
+    <p class="lede">Who's here, whose turn it is, and when the meeting room is free.</p>
+  </section>
+
+  <section id="fundGate" class="card narrow-gate reveal" hidden></section>
+
+  <div id="fundBody" hidden>
+    <div class="office-grid">
+      <section class="card reveal" id="today">
+        <div class="card-head"><span>Who's in today</span><span class="hint" id="todayHint"></span></div>
+        <div class="card-body" id="todayBody"></div>
+      </section>
+      <section class="card reveal" id="meeting">
+        <div class="card-head"><span>Meeting room</span><span class="hint">The old storage room</span></div>
+        <div class="card-body">
+          <div id="mrStatus"></div>
+          <form class="mr-form" id="mrForm" autocomplete="off">
+            <label class="fld-label">Date<input id="mrDate" class="fld" type="date" required /></label>
+            <label class="fld-label">From<input id="mrStart" class="fld" type="time" step="900" required /></label>
+            <label class="fld-label">To<input id="mrEnd" class="fld" type="time" step="900" required /></label>
+            <input id="mrTitle" class="fld full" type="text" maxlength="80" placeholder="What's it for? (optional)" />
+            <button class="btn primary full" type="submit">Book the meeting room</button>
+          </form>
+          <div class="sub-head">Upcoming bookings</div>
+          <div id="mrList"></div>
+        </div>
+      </section>
+    </div>
+    <section class="card fund-section reveal" id="chores">
+      <div class="card-head"><span>Chores</span><button class="linkbtn" id="choreAdd" hidden>+ New chore</button></div>
+      <div class="card-body"><div class="chore-list" id="choreList"></div><div id="chorePaused"></div></div>
+    </section>
+  </div>
+</main>
+
+<div class="overlay" id="authOverlay">
+  <div class="modal"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="supabase.js?v=30"></script>
+<script src="config.js?v=30"></script>
+<script src="core.js?v=30"></script>
+<script src="lang.js?v=30"></script>
+<script src="fund-core.js?v=30"></script>
+<script src="office.js?v=30"></script>
+</body>
+</html>
