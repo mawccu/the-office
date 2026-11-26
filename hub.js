@@ -15,6 +15,10 @@ const SERVICES = [
     blurb: "Out of coffee? Need a cable? Request supplies and gear here.", live: true },
   { key: "projects", href: "projects.html", icon: "rocket", title: "Projects",
     blurb: "Post a project, define the roles you need, and see who's in.", live: true },
+  { key: "fund", href: "fund.html", icon: "wallet", title: "Office fund",
+    blurb: "Your balance, deposits, and every shared purchase split to the fils.", live: true },
+  { key: "expenses", href: "expenses.html", icon: "calendar", title: "Expenses",
+    blurb: "Monthly bills, plus a wishlist that's only bought if all six say yes.", live: true },
 ];
 
 const servicesEl = document.getElementById("services");
@@ -70,6 +74,12 @@ function renderActivity() {
   if (liveProj) liveProj.textContent = projLive.length
     ? `${projLive.length} live project${projLive.length === 1 ? "" : "s"}`
     : "No projects yet";
+
+  // the fund is private, so its tiles just say who it's for
+  const liveFund = document.getElementById("live-fund");
+  if (liveFund) liveFund.textContent = "For the six members of Malek's office";
+  const liveExp = document.getElementById("live-expenses");
+  if (liveExp) liveExp.textContent = "Bills and votes";
 
   if (activityStripEl) {
     const bits = [];

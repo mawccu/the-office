@@ -63,6 +63,14 @@ const ICON_PATHS = {
   dots: '<circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/>',
   bolt: '<path d="M13 2L4 14h6l-1 8 9-12h-6z"/>',
   rocket: '<path d="M12 3c3 2.2 4.2 5.2 4.2 8.2 0 2.3-1.2 4.3-4.2 6-3-1.7-4.2-3.7-4.2-6C7.8 8.2 9 5.2 12 3z"/><circle cx="12" cy="9.5" r="1.6"/><path d="M8.2 14.5l-2.2 2 1.8 2.8M15.8 14.5l2.2 2-1.8 2.8"/>',
+  wallet: '<path d="M4 7.5A2.5 2.5 0 0 1 6.5 5H18v3"/><path d="M4 7.5v10A2.5 2.5 0 0 0 6.5 20H20V8H6.5A2.5 2.5 0 0 1 4 7.5z"/><circle cx="16" cy="14" r="1.3" fill="currentColor" stroke="none"/>',
+  bell: '<path d="M6 16V11a6 6 0 0 1 12 0v5l1.5 2h-15z"/><path d="M10 20.5a2.2 2.2 0 0 0 4 0"/>',
+  receipt: '<path d="M6 3h12v18l-3-2-3 2-3-2-3 2z"/><path d="M9 8h6M9 12h6M9 16h3"/>',
+  check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
+  x: '<path d="M6 6l12 12M18 6L6 18"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  chart: '<path d="M4 20h16"/><path d="M7 16V11M12 16V6M17 16v-3"/>',
+  calendar: '<rect x="4" y="5.5" width="16" height="14.5" rx="1.5"/><path d="M4 10h16M8.5 3.5v4M15.5 3.5v4"/>',
   heart: '<path fill="currentColor" stroke="none" d="M12 21s-7.4-4.6-9.7-9.3A5.2 5.2 0 0 1 12 6.1a5.2 5.2 0 0 1 9.7 5.6C19.4 16.4 12 21 12 21z"/>',
   "dot-moha": '<circle cx="12" cy="12" r="6.5" fill="#c9b38d" stroke="none"/>',
   "dot-malek": '<circle cx="12" cy="12" r="6.5" fill="#c98f87" stroke="none"/>',
@@ -93,11 +101,18 @@ const NAV = [
   { key: "requests",  label: "Requests",  href: "requests.html" },
   { key: "resources", label: "Resources", href: "resources.html" },
   { key: "projects",  label: "Projects",  href: "projects.html" },
+  { key: "fund",      label: "Fund",      href: "fund.html" },
+  { key: "expenses",  label: "Expenses",  href: "expenses.html" },
+  { key: "admin",     label: "Admin",     href: "admin.html", adminOnly: true },
 ];
+let navActive = null;
 function renderNav(active) {
+  if (active !== undefined) navActive = active;
+  active = navActive;
   const el = document.getElementById("mainnav");
   if (!el) return;
-  el.innerHTML = NAV.map((n) => n.soon
+  const isFundAdmin = localStorage.getItem("fund_role") === "admin";
+  el.innerHTML = NAV.filter((n) => !n.adminOnly || isFundAdmin).map((n) => n.soon
     ? `<span class="navlink soon" title="Coming soon">${esc(n.label)}<span class="soon-pill">soon</span></span>`
     : `<a class="navlink${n.key === active ? " active" : ""}" href="${n.href}">${esc(n.label)}</a>`
   ).join("");
@@ -244,13 +259,47 @@ async function callRpc(fn, params, okMsg) {
   }
 }
 
+/* ============================================================
+   Office-fund bell — shown only to fund members/admin. fund_unread()
+   returns null for anyone not in the fund, so other pages stay quiet.
+   ============================================================ */
+let bellTimer = null;
+function setBell(count) {
+  let b = document.getElementById("fundBell");
+  if (count === null || count === undefined) { if (b) b.remove(); return; }
+  if (!b && whoamiEl) {
+    b = document.createElement("a");
+    b.id = "fundBell"; b.className = "fund-bell"; b.href = "fund.html#notifications";
+    b.title = "Office fund notifications";
+    whoamiEl.prepend(b);
+  }
+  if (b) b.innerHTML = `${icon("bell")}${count > 0 ? `<span class="fund-bell-n">${count > 99 ? "99+" : count}</span>` : ""}`;
+}
+async function refreshBell() {
+  if (!auth || typeof sb === "undefined") { setBell(null); return; }
+  try {
+    const { data, error } = await sb.rpc("fund_unread", { p_name: auth.name, p_pin: auth.pin });
+    if (error) throw error;
+    if (data === null) localStorage.removeItem("fund_role");
+    setBell(data);
+  } catch { setBell(null); }
+}
+function startBell() {
+  clearInterval(bellTimer);
+  refreshBell();
+  bellTimer = setInterval(() => { if (!document.hidden) refreshBell(); }, 45000);
+}
+document.addEventListener("visibilitychange", () => { if (!document.hidden && auth) refreshBell(); });
+
 function updateWhoami() {
   if (!whoamiEl) return;
   if (auth) {
     whoamiEl.innerHTML = `<span class="whoami-name">You <b>${esc(auth.name)}</b></span><button id="pwBtn" class="linkbtn">password</button><button id="signOutBtn" class="linkbtn">sign out</button>`;
     document.getElementById("pwBtn").addEventListener("click", changePassword);
-    document.getElementById("signOutBtn").addEventListener("click", clearAuth);
+    document.getElementById("signOutBtn").addEventListener("click", () => { localStorage.removeItem("fund_role"); clearAuth(); renderNav(); });
+    startBell();
   } else {
+    setBell(null);
     whoamiEl.innerHTML = `<button id="signInBtn" class="linkbtn strong">Log in</button>`;
     document.getElementById("signInBtn").addEventListener("click", () => openAuth("login"));
   }
