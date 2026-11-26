@@ -278,10 +278,13 @@ function setBell(count) {
 async function refreshBell() {
   if (!auth || typeof sb === "undefined") { setBell(null); return; }
   try {
-    const { data, error } = await sb.rpc("fund_unread", { p_name: auth.name, p_pin: auth.pin });
+    const { data, error } = await sb.rpc("fund_me", { p_name: auth.name, p_pin: auth.pin });
     if (error) throw error;
-    if (data === null) localStorage.removeItem("fund_role");
-    setBell(data);
+    const before = localStorage.getItem("fund_role");
+    if (data.role) localStorage.setItem("fund_role", data.role); else localStorage.removeItem("fund_role");
+    if (before !== localStorage.getItem("fund_role")) renderNav();
+    if (data.name && data.name !== auth.name) saveAuth({ name: data.name, pin: auth.pin });  // "admin" -> "Admin"
+    setBell(data.role ? data.unread : null);
   } catch { setBell(null); }
 }
 function startBell() {

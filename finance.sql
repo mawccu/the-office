@@ -889,3 +889,43 @@ grant execute on function
 --    (Or run the separate seed_accounts.sql you were given, which creates
 --    all seven accounts and seats everyone. Keep that file out of git.)
 -- ------------------------------------------------------------
+
+-- ------------------------------------------------------------
+-- 9) Sign-in comfort: usernames work in any capitals ("admin" = "Admin"),
+--    and fund_me() lets every page learn the fund role right after login
+--    (so the Admin link shows up immediately).
+-- ------------------------------------------------------------
+create or replace function public._require(p_name text, p_pin text)
+returns text language plpgsql security definer set search_path = public, extensions as $$
+declare v_name text;
+begin
+  select name into v_name from public.users
+   where lower(name) = lower(btrim(p_name)) and pass_hash = crypt(p_pin, pass_hash)
+   order by (name = btrim(p_name)) desc limit 1;
+  if v_name is null then raise exception 'Wrong username or password'; end if;
+  return v_name;
+end; $$;
+
+create or replace function public.fund_me(p_name text, p_pin text)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+declare v_name text; v_role text;
+begin
+  v_name := public._require(p_name, p_pin);
+  select fund_role into v_role from public.users where name = v_name;
+  if v_role is not null then perform public._fund_tick(); end if;
+  return jsonb_build_object('name', v_name, 'role', v_role,
+    'unread', case when v_role is null then null else
+      (select count(*)::int from public.fund_notifications where user_name = v_name and read_at is null) end);
+end; $$;
+
+create or replace function public.fund_unread(p_name text, p_pin text)
+returns int language plpgsql security definer set search_path = public, extensions as $$
+declare v_name text; v_role text;
+begin
+  v_name := public._require(p_name, p_pin);
+  select fund_role into v_role from public.users where name = v_name;
+  if v_role is null then return null; end if;
+  perform public._fund_tick();
+  return (select count(*)::int from public.fund_notifications where user_name = v_name and read_at is null);
+end; $$;
+grant execute on function public.fund_me(text,text) to anon;
