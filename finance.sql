@@ -929,3 +929,112 @@ begin
   return (select count(*)::int from public.fund_notifications where user_name = v_name and read_at is null);
 end; $$;
 grant execute on function public.fund_me(text,text) to anon;
+-- ------------------------------------------------------------
+-- 10) Office chat + "active now / last active"
+--     Every fund call updates last_seen_at (at most every 20 s).
+--     Someone counts as active if seen in the last 2 minutes.
+-- ------------------------------------------------------------
+alter table public.users add column if not exists last_seen_at timestamptz;
+alter table public.users add column if not exists chat_read_id bigint not null default 0;
+
+create table if not exists public.fund_messages (
+  id         bigserial primary key,
+  user_name  text not null references public.users(name),
+  body       text not null check (length(body) between 1 and 1000),
+  created_at timestamptz not null default now()
+);
+create index if not exists fund_messages_created_idx on public.fund_messages(created_at desc);
+alter table public.fund_messages enable row level security;
+revoke all on public.fund_messages from anon, authenticated;
+
+create or replace function public._fund_seen(p_user text) returns void
+language sql security definer set search_path = public, extensions as $$
+  update public.users set last_seen_at = now()
+   where name = p_user and (last_seen_at is null or last_seen_at < now() - interval '20 seconds')
+$$;
+
+-- every fund action now also counts as "seen"
+create or replace function public._fund_user(p_name text, p_pin text) returns public.users
+language plpgsql security definer set search_path = public, extensions as $$
+declare v_name text; v_u public.users;
+begin
+  v_name := public._require(p_name, p_pin);
+  select * into v_u from public.users where name = v_name;
+  if v_u.fund_role is null then
+    raise exception 'You are not in the office fund yet. Ask the admin to add you.';
+  end if;
+  perform public._fund_seen(v_name);
+  return v_u;
+end; $$;
+
+create or replace function public._fund_people() returns jsonb
+language sql stable security definer set search_path = public, extensions as $$
+  select coalesce(jsonb_agg(jsonb_build_object('name', name, 'role', fund_role, 'desk_id', desk_id,
+           'last_seen_at', last_seen_at,
+           'active', last_seen_at is not null and last_seen_at > now() - interval '2 minutes')
+         order by (fund_role = 'admin') desc, name), '[]'::jsonb)
+  from public.users where fund_role is not null
+$$;
+
+create or replace function public.fund_people(p_name text, p_pin text) returns jsonb
+language plpgsql security definer set search_path = public, extensions as $$
+begin
+  perform public._fund_user(p_name, p_pin);
+  return public._fund_people();
+end; $$;
+
+-- p_after = id of the newest message the page already has (0 = first load: last 150)
+create or replace function public.fund_chat(p_name text, p_pin text, p_after bigint)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+declare v_u public.users; v_msgs jsonb; v_max bigint;
+begin
+  v_u := public._fund_user(p_name, p_pin);
+  select coalesce(jsonb_agg(jsonb_build_object('id', m.id, 'user_name', m.user_name, 'body', m.body, 'created_at', m.created_at) order by m.id), '[]'::jsonb)
+    into v_msgs
+    from (select * from public.fund_messages
+           where id > coalesce(p_after, 0)
+           order by id desc limit case when coalesce(p_after, 0) = 0 then 150 else 500 end) m;
+  select coalesce(max(id), 0) into v_max from public.fund_messages;
+  update public.users set chat_read_id = greatest(chat_read_id, v_max) where name = v_u.name;
+  return jsonb_build_object('messages', v_msgs, 'people', public._fund_people(), 'me', v_u.name);
+end; $$;
+
+create or replace function public.fund_chat_send(p_name text, p_pin text, p_body text)
+returns bigint language plpgsql security definer set search_path = public, extensions as $$
+declare v_u public.users; v_id bigint;
+begin
+  v_u := public._fund_user(p_name, p_pin);
+  p_body := btrim(coalesce(p_body, ''));
+  if length(p_body) = 0 then raise exception 'Write a message first'; end if;
+  if length(p_body) > 1000 then raise exception 'Keep messages under 1000 characters'; end if;
+  if (select count(*) from public.fund_messages where user_name = v_u.name and created_at > now() - interval '10 seconds') >= 5 then
+    raise exception 'Slow down a little';
+  end if;
+  insert into public.fund_messages(user_name, body) values (v_u.name, p_body) returning id into v_id;
+  update public.users set chat_read_id = greatest(chat_read_id, v_id) where name = v_u.name;
+  return v_id;
+end; $$;
+
+-- fund_me also reports unread chat messages and marks the person as seen
+create or replace function public.fund_me(p_name text, p_pin text)
+returns jsonb language plpgsql security definer set search_path = public, extensions as $$
+declare v_name text; v_role text; v_read bigint;
+begin
+  v_name := public._require(p_name, p_pin);
+  select fund_role, chat_read_id into v_role, v_read from public.users where name = v_name;
+  if v_role is null then return jsonb_build_object('name', v_name, 'role', null); end if;
+  perform public._fund_seen(v_name);
+  perform public._fund_tick();
+  return jsonb_build_object('name', v_name, 'role', v_role,
+    'unread', (select count(*)::int from public.fund_notifications where user_name = v_name and read_at is null),
+    'chat_unread', (select count(*)::int from public.fund_messages where id > v_read and user_name <> v_name));
+end; $$;
+
+revoke all on function public._fund_seen(text) from public, anon, authenticated;
+revoke all on function public._fund_people() from public, anon, authenticated;
+grant execute on function
+  public.fund_people(text,text),
+  public.fund_chat(text,text,bigint),
+  public.fund_chat_send(text,text,text),
+  public.fund_me(text,text)
+  to anon;

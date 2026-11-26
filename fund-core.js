@@ -74,6 +74,8 @@ async function loadFund() {
     const { data, error } = await sb.rpc("fund_dashboard", { p_name: auth.name, p_pin: auth.pin });
     if (error) throw error;
     F = data;
+    const pr = await sb.rpc("fund_people", { p_name: auth.name, p_pin: auth.pin });
+    F.people = pr.error ? [] : (pr.data || []);
     localStorage.setItem("fund_role", F.me.role);
     renderNav();
     setBell(F.unread);
@@ -101,6 +103,17 @@ async function loadFund() {
 afterWrite = loadFund;
 onAuthChange = loadFund;
 setInterval(() => { if (auth && !document.hidden && !document.querySelector(".overlay.open")) loadFund(); }, 60000);
+
+// ---- presence: "Active now" / "Last active 3h ago" ----
+function personByName(n) { return F?.people?.find((p) => p.name === n) || null; }
+function lastSeenText(p) {
+  if (!p || !p.last_seen_at) return "Hasn't signed in yet";
+  if (p.active) return "Active now";
+  const d = new Date(p.last_seen_at), mins = (Date.now() - d) / 60000;
+  if (mins < 60 * 24 * 2) return `Last active ${relShort(p.last_seen_at)} ago`;
+  return `Last active ${d.toLocaleDateString([], { day: "numeric", month: "short" })}`;
+}
+function presenceDot(p) { return `<span class="pres-dot ${p?.active ? "on" : ""}" aria-hidden="true"></span>`; }
 
 function memberCount() { return F ? F.members.length : 0; }
 function memberByDesk(id) { return F?.members.find((m) => m.desk_id === id) || null; }
@@ -154,7 +167,8 @@ function renderFundPlan(el, opts = {}) {
       <rect x="${d.x}" y="${d.y}" width="${d.w}" height="${d.h}" rx="14"></rect>
       <text class="fp-name" x="${cx}" y="${d.y + 44}" text-anchor="middle">${esc(nm)}</text>
       <text class="fp-bal" x="${cx}" y="${d.y + 78}" text-anchor="middle">${esc(bal)}</text>
-      ${m.pending_fils > 0 ? `<circle class="fp-pend" cx="${d.x + d.w - 14}" cy="${d.y + 14}" r="8"></circle>` : ""}</g>`;
+      ${m.pending_fils > 0 ? `<circle class="fp-pend" cx="${d.x + d.w - 14}" cy="${d.y + 14}" r="8"></circle>` : ""}
+      ${personByName(m.name)?.active ? `<circle class="fp-active" cx="${d.x + 14}" cy="${d.y + 14}" r="8"><title>Active now</title></circle>` : ""}</g>`;
   }).join("");
   el.innerHTML = `
     <svg class="fp-svg" viewBox="${v.x} ${v.y} ${v.w} ${v.h}" role="img" aria-label="Malek's office floor plan with each member's desk and balance">
@@ -163,9 +177,9 @@ function renderFundPlan(el, opts = {}) {
     <div class="fp-legend">
       <span><i class="sw ok"></i>In credit</span><span><i class="sw low"></i>Under 10 JD</span>
       <span><i class="sw owed"></i>Owes money</span><span><i class="sw free"></i>Free desk</span>
-      <span><i class="sw pend"></i>Deposit waiting</span>
+      <span><i class="sw pend"></i>Deposit waiting</span><span><i class="sw act"></i>Active now</span>
     </div>
-    <div class="fp-admin">Admin: <b>${esc(F.admins.join(", ") || "—")}</b> · no desk, no share, no vote</div>`;
+    <div class="fp-admin">Admin: ${F.admins.map((a) => `${presenceDot(personByName(a))}<b>${esc(a)}</b> · ${esc(lastSeenText(personByName(a)))}`).join(", ") || "—"} · no desk, no share, no vote</div>`;
   el.querySelectorAll(".fp-desk").forEach((g) => {
     const open = () => (opts.onDesk || showDeskCard)(g.dataset.desk);
     g.addEventListener("click", open);
@@ -191,7 +205,8 @@ function showDeskCard(deskId) {
     document.getElementById("wallet").scrollIntoView({ behavior: "smooth", block: "start" });
     return;
   }
-  openSheet(m.name, `${esc(d.label)} · ${d.area === "kitchen" ? "Kitchen" : "Desks area"}`, `
+  const pp = personByName(m.name);
+  openSheet(m.name, `${esc(d.label)} · ${d.area === "kitchen" ? "Kitchen" : "Desks area"} · ${presenceDot(pp)}${esc(lastSeenText(pp))}`, `
     <div class="sheet-bal ${balanceState(m.balance_fils)}">${esc(balanceText(m.balance_fils))}</div>
     ${m.pending_fils > 0 ? `<div class="sheet-note">${jd(m.pending_fils)} deposit waiting for the admin</div>` : ""}
     <div class="modal-actions"><button class="btn ghost" id="shClose">Close</button></div>`,

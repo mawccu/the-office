@@ -210,7 +210,7 @@ function renderMembers() {
   $("memberList").innerHTML = F.members.map((m) => {
     const d = FUND_PLAN.desks.find((x) => x.id === m.desk_id);
     return `<button class="adm-row link" data-desk="${m.desk_id}">
-      <span class="adm-main"><b>${esc(m.name)}</b><span class="adm-sub">${esc(d?.label || "No desk")}${m.pending_fils ? ` · ${jd(m.pending_fils)} waiting` : ""}</span></span>
+      <span class="adm-main"><b>${presenceDot(personByName(m.name))}${esc(m.name)}</b><span class="adm-sub">${esc(d?.label || "No desk")} · ${esc(lastSeenText(personByName(m.name)))}${m.pending_fils ? ` · ${jd(m.pending_fils)} waiting` : ""}</span></span>
       <span class="adm-bal ${balanceState(m.balance_fils)}">${esc(balanceText(m.balance_fils))}</span>
     </button>`;
   }).join("") || emptyBlock("No members yet. Tap a free desk on the plan to add someone.");

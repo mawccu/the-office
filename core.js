@@ -69,6 +69,7 @@ const ICON_PATHS = {
   check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>',
   x: '<path d="M6 6l12 12M18 6L6 18"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',
+  chat: '<path d="M4 5.5h16v10H9l-5 4z"/>',
   chart: '<path d="M4 20h16"/><path d="M7 16V11M12 16V6M17 16v-3"/>',
   calendar: '<rect x="4" y="5.5" width="16" height="14.5" rx="1.5"/><path d="M4 10h16M8.5 3.5v4M15.5 3.5v4"/>',
   heart: '<path fill="currentColor" stroke="none" d="M12 21s-7.4-4.6-9.7-9.3A5.2 5.2 0 0 1 12 6.1a5.2 5.2 0 0 1 9.7 5.6C19.4 16.4 12 21 12 21z"/>',
@@ -96,38 +97,27 @@ function toast(msg) {
    up everywhere. `soon: true` renders a disabled "soon" pill.
    ============================================================ */
 const NAV = [
-  { key: "hub",       label: "Hub",       href: "index.html" },
-  { key: "cleaning",  label: "Cleaning",  href: "cleaning.html" },
-  { key: "requests",  label: "Requests",  href: "requests.html" },
-  { key: "resources", label: "Resources", href: "resources.html" },
-  { key: "projects",  label: "Projects",  href: "projects.html" },
-  { key: "fund",      label: "Fund",      href: "fund.html" },
-  { key: "expenses",  label: "Expenses",  href: "expenses.html" },
-  { key: "admin",     label: "Admin",     href: "admin.html", adminOnly: true },
+  { key: "fund",     label: "Fund",     href: "fund.html" },
+  { key: "expenses", label: "Expenses", href: "expenses.html" },
+  { key: "chat",     label: "Chat",     href: "chat.html" },
+  { key: "admin",    label: "Admin",    href: "admin.html", adminOnly: true },
 ];
 let navActive = null;
+let chatUnread = 0;
 function renderNav(active) {
   if (active !== undefined) navActive = active;
   active = navActive;
   const el = document.getElementById("mainnav");
   if (!el) return;
   const isFundAdmin = localStorage.getItem("fund_role") === "admin";
-  el.innerHTML = NAV.filter((n) => !n.adminOnly || isFundAdmin).map((n) => n.soon
-    ? `<span class="navlink soon" title="Coming soon">${esc(n.label)}<span class="soon-pill">soon</span></span>`
-    : `<a class="navlink${n.key === active ? " active" : ""}" href="${n.href}">${esc(n.label)}</a>`
+  el.innerHTML = NAV.filter((n) => !n.adminOnly || isFundAdmin).map((n) =>
+    `<a class="navlink${n.key === active ? " active" : ""}" href="${n.href}">${esc(n.label)}${
+      n.key === "chat" && chatUnread > 0 && active !== "chat" ? `<span class="nav-badge">${chatUnread > 99 ? "99+" : chatUnread}</span>` : ""}</a>`
   ).join("");
-  // building icon in the brand mark
   const bm = document.querySelector(".brand-mark");
   if (bm && !bm.querySelector("svg")) bm.innerHTML = icon("building");
-  // "Volunteer" corner button -> the keep-it-alive page (once per page)
-  if (!document.getElementById("volunteerBtn")) {
-    const a = document.createElement("a");
-    a.id = "volunteerBtn";
-    a.className = "volunteer-btn";
-    a.href = "volunteer.html";
-    a.innerHTML = `<span class="vb-heart">${icon("heart")}</span> Volunteer`;
-    document.body.appendChild(a);
-  }
+  const brand = document.querySelector("a.brand");
+  if (brand) brand.setAttribute("href", "fund.html");
 }
 
 /* ============================================================
@@ -284,6 +274,8 @@ async function refreshBell() {
     if (data.role) localStorage.setItem("fund_role", data.role); else localStorage.removeItem("fund_role");
     if (before !== localStorage.getItem("fund_role")) renderNav();
     if (data.name && data.name !== auth.name) saveAuth({ name: data.name, pin: auth.pin });  // "admin" -> "Admin"
+    const cu = data.role ? (data.chat_unread || 0) : 0;
+    if (cu !== chatUnread) { chatUnread = cu; renderNav(); }
     setBell(data.role ? data.unread : null);
   } catch { setBell(null); }
 }
