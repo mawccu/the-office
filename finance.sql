@@ -883,7 +883,9 @@ grant execute on function
 -- 8) Make your admin. Replace the name with the admin's username
 --    (the account must already exist), then run just this line:
 --
---    update public.users set fund_role = 'admin', desk_id = null where name = 'Malek';
+--    update public.users set fund_role = 'admin', desk_id = null where name = 'Admin';
 --
 --    The admin then adds the six members (and their desks) from admin.html.
+--    (Or run the separate seed_accounts.sql you were given, which creates
+--    all seven accounts and seats everyone. Keep that file out of git.)
 -- ------------------------------------------------------------
